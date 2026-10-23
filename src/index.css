@@ -1,0 +1,30 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+}
+
+* { box-sizing: border-box; }
+html { background: #080907; color-scheme: dark; }
+body { margin: 0; min-width: 320px; min-height: 100vh; }
+button, select { font: inherit; }
+
+.three-viewer:fullscreen {
+  width: 100vw;
+  height: 100vh;
+  min-height: 0;
+}
+
+main.bg-paper { background: #080907; color: #f5f5f4; }
+main.bg-paper > .bg-white { background: #11120f; border-color: rgba(255, 255, 255, .1); box-shadow: 0 28px 100px rgba(0, 0, 0, .55); }
+
+.model-list { scrollbar-width: thin; scrollbar-color: #c7c5ba transparent; }
+.model-list::-webkit-scrollbar { width: 6px; }
+.model-list::-webkit-scrollbar-thumb { border-radius: 99px; background: #c7c5ba; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; }
+}
