@@ -58,12 +58,6 @@ function App({ models }) {
     window.location.hash = modelHash(model.name)
   }
 
-  const navigateModel = (direction) => {
-    if (visibleModels.length < 2) return
-    const index = visibleModels.findIndex((model) => model.id === selected?.id)
-    selectModel(visibleModels[(index + direction + visibleModels.length) % visibleModels.length])
-  }
-
   return (
     <main className="min-h-screen bg-paper p-3 text-ink sm:p-5 lg:h-screen lg:overflow-hidden lg:p-6">
       <div className={`mx-auto grid min-h-[calc(100vh-1.5rem)] max-w-[1800px] overflow-hidden rounded-[1.75rem] border border-black/10 bg-white shadow-[0_28px_80px_rgba(20,20,15,.14)] transition-[grid-template-columns] duration-300 lg:h-[calc(100vh-3rem)] lg:min-h-0 ${sidebarOpen ? 'lg:grid-cols-[minmax(0,1fr)_420px]' : 'lg:grid-cols-[minmax(0,1fr)_64px]'}`}>
@@ -82,8 +76,7 @@ function App({ models }) {
             <ThreeViewer
               src={resolveAsset(selected.path)}
               name={displayName(selected.name)}
-              onNavigate={navigateModel}
-              canNavigate={visibleModels.length > 1}
+              size={selected.size}
             />
           ) : <EmptyViewer />}
 
@@ -155,17 +148,6 @@ function App({ models }) {
               )
             })}
             {!visibleModels.length && <p className="p-8 text-center text-sm text-white/35">No GLB models in this folder.</p>}
-          </div>
-
-          <div className="border-t border-white/10 px-6 py-4 sm:px-8">
-            <a
-              href="https://u.pcloud.link/publink/show?code=kZ0IdA5Z7ImlQeo5aLfgIHHO5rVeB7iu0nJX"
-              target="_blank"
-              rel="noreferrer"
-              className="flex w-full items-center justify-center gap-2 rounded-xl bg-acid px-4 py-3 text-sm font-bold text-ink transition hover:brightness-110"
-            >
-              Get Models <span aria-hidden="true">↗</span>
-            </a>
           </div>
 
           <footer className="flex items-center justify-between border-t border-white/10 px-6 py-4 text-[10px] font-medium uppercase tracking-[.2em] text-white/30 sm:px-8">

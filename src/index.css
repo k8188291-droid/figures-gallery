@@ -21,6 +21,12 @@ button, select { font: inherit; }
 main.bg-paper { background: #080907; color: #f5f5f4; }
 main.bg-paper > .bg-white { background: #11120f; border-color: rgba(255, 255, 255, .1); box-shadow: 0 28px 100px rgba(0, 0, 0, .55); }
 
+/* Indeterminate model loading bar (no known file size, or parsing). */
+@keyframes loading-slide {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(300%); }
+}
+
 .model-list { scrollbar-width: thin; scrollbar-color: #c7c5ba transparent; }
 .model-list::-webkit-scrollbar { width: 6px; }
 .model-list::-webkit-scrollbar-thumb { border-radius: 99px; background: #c7c5ba; }

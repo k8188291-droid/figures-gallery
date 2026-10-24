@@ -4,8 +4,6 @@
 
 使用者功能請參考 `docs/01.spec.md`。
 
-PC VR 展示桌、桌面預覽與 VIVE XR Elite / Pimax Crystal Super 的測試方式請參考 [VR 使用說明](docs/02.vr-preview.md)。
-
 預設的 model-viewer 風格打光、色調映射與接觸陰影請參考 [攝影棚外觀](docs/03.studio-look.md)。
 
 Production 的模型改由 Cloudflare R2 bucket 在執行時提供，新增、改名或刪除模型不需要重新部署，請參考 [Models from R2](docs/04.r2-models.md)。

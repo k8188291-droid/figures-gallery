@@ -1,4 +1,4 @@
-import { readdir, writeFile, mkdir } from 'node:fs/promises'
+import { readdir, stat, writeFile, mkdir } from 'node:fs/promises'
 import { dirname, extname, join, relative, resolve, sep } from 'node:path'
 
 const root = resolve('models')
@@ -22,8 +22,10 @@ const portable = (path) => path.split(sep).join('/')
 const imageExtensions = ['.png', '.jpg', '.jpeg', '.webp']
 const relativeFiles = new Set(allFiles.map((file) => portable(relative(root, file))))
 
-const models = allFiles
-  .filter((file) => extname(file).toLowerCase() === '.glb')
+const glbFiles = allFiles.filter((file) => extname(file).toLowerCase() === '.glb')
+const sizes = new Map(await Promise.all(glbFiles.map(async (file) => [file, (await stat(file)).size])))
+
+const models = glbFiles
   .map((file) => {
     const path = portable(relative(root, file))
     const base = path.slice(0, -extname(path).length)
@@ -37,6 +39,7 @@ const models = allFiles
       folder: portable(dirname(path)) === '.' ? 'Root' : portable(dirname(path)),
       path: `models/${encodeURI(path)}`,
       thumbnail: thumbnailSource ? `models/${encodeURI(`${base}.webp`)}` : null,
+      size: sizes.get(file),
     }
   })
   .sort((a, b) => a.id.localeCompare(b.id, 'zh-Hant', { numeric: true }))
