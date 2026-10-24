@@ -8,11 +8,14 @@ PC VR 展示桌、桌面預覽與 VIVE XR Elite / Pimax Crystal Super 的測試�
 
 預設的 model-viewer 風格打光、色調映射與接觸陰影請參考 [攝影棚外觀](docs/03.studio-look.md)。
 
+Production 的模型改由 Cloudflare R2 bucket 在執行時提供，新增、改名或刪除模型不需要重新部署，請參考 [Models from R2](docs/04.r2-models.md)。
+
 ## 專案結構
 
 ```text
 3d-gallery/
 ├─ docs/                   # 功能規格與專案文件
+├─ functions/              # Cloudflare Pages Functions（R2 模型清單與檔案）
 ├─ enviroments/           # 環境全景原圖
 ├─ models/                # GLB 模型與同名縮圖，不納入 Git
 ├─ public/                # Service Worker 等公開檔案
@@ -53,7 +56,7 @@ models/
 
 支援的縮圖來源格式：PNG、JPG、JPEG、WebP。
 
-模型資料夾會成為網頁中的 folder 選項。新增或調整模型後需要重新啟動開發伺服器或重新 build。
+模型資料夾會成為網頁中的 folder 選項。本機開發時新增或調整模型後需要重新啟動開發伺服器。Production 則直接上傳到 R2 bucket（見 `docs/04.r2-models.md`），不需要重新 build。
 
 ## 新增環境圖片
 
@@ -67,7 +70,7 @@ models/
 npm run build
 ```
 
-完成後將 `dist/` 內容部署到 static hosting。
+完成後將 `dist/` 內容部署到 static hosting。`dist/` 不再包含 GLB 與縮圖；Cloudflare Pages 部署方式與 R2 binding 見 `docs/04.r2-models.md`。
 
 Vite 使用相對資源路徑，因此支援：
 
@@ -84,9 +87,10 @@ npm run preview
 ## 部署注意事項
 
 - Three.js、GLTFLoader 與 OrbitControls 從 jsDelivr CDN 載入，首次開啟網站需要能連線至 CDN。
-- GLB、模型縮圖與環境圖片由網站本身提供，不依賴外部圖片 CORS。
+- GLB 與模型縮圖由同網域的 Pages Function 從 R2 提供，環境圖片由網站本身提供，不依賴外部圖片 CORS。
 - Production 環境會註冊 Service Worker，並以 cache-first 策略快取 GLB。
-- 替換同一路徑的模型後，如需強制用戶更新快取，必須調整 Service Worker cache version。
+- 替換同一路徑的模型後，回訪用戶仍會看到快取的舊檔；要更新請改用新檔名（或調整 Service Worker 的 model cache version）。
+- 頁面導覽採 network-first，快取的頁面只作為離線備援。
 
 ## Git 忽略項目
 
