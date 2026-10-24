@@ -1,4 +1,5 @@
 import { createVRStage } from './vrStage'
+import { STUDIO_DEFAULTS, applyStudioLook, createNeutralEnvironment } from './studioLook'
 
 export function disposeObject(root) {
   const resources = new Set()
@@ -29,20 +30,22 @@ export function createGalleryRuntime(container, modules, callbacks, settings) {
   renderer.xr.enabled = true
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
   renderer.outputColorSpace = THREE.SRGBColorSpace
-  renderer.toneMapping = THREE.ACESFilmicToneMapping
-  renderer.toneMappingExposure = 1.1
   Object.assign(renderer.domElement.style, { position: 'absolute', inset: '0', display: 'block', width: '100%', height: '100%' })
   container.appendChild(renderer.domElement)
   const controls = new OrbitControls(camera, renderer.domElement)
   controls.enableDamping = true
   controls.dampingFactor = 0.07
   controls.zoomToCursor = false
-  scene.add(new THREE.HemisphereLight(0xffffff, 0x20241b, 1.2))
+  // Legacy fill lights. The studio look (model-viewer parity) is IBL only, so
+  // they stay hidden unless `fillLights` is turned on.
+  const hemiLight = new THREE.HemisphereLight(0xffffff, 0x20241b, 1.2)
   const keyLight = new THREE.DirectionalLight(0xffffff, 2.4)
   keyLight.position.set(4, 6, 8)
-  scene.add(keyLight)
+  scene.add(hemiLight, keyLight)
   const pmrem = new THREE.PMREMGenerator(renderer)
   pmrem.compileEquirectangularShader()
+  const look = applyStudioLook(THREE, renderer, scene, { ...STUDIO_DEFAULTS, ...settings.look, lights: [hemiLight, keyLight] })
+  let neutralTarget
   const loader = new GLTFLoader()
   loader.setMeshoptDecoder(MeshoptDecoder)
   let disposed = false
@@ -115,6 +118,10 @@ export function createGalleryRuntime(container, modules, callbacks, settings) {
       if (roomVisible) vr.setModel(model, modelSize, modelName)
       else scene.add(model)
     }
+    // The contact shadow belongs to the desktop viewer; the VR desk has its
+    // own pedestal and the model can be picked up there.
+    look.shadow.object.visible = !roomVisible
+    look.shadow.fit(roomVisible ? null : model)
     if (!inVR) { vr.previewPlacement(); resetCamera() }
   }
   function sessionEnded() {
@@ -186,6 +193,7 @@ export function createGalleryRuntime(container, modules, callbacks, settings) {
     const version = ++loadVersion
     modelName = name
     vr.setModel(null)
+    look.shadow.fit(null)
     if (model) { model.removeFromParent(); disposeObject(model); model = null }
     vr.setStatus(`Loading: ${name}`, canNavigate)
     callbacks.onLoading(true, false)
@@ -198,7 +206,7 @@ export function createGalleryRuntime(container, modules, callbacks, settings) {
       box.getSize(modelSize)
       radius = Math.max(box.getBoundingSphere(new THREE.Sphere()).radius, 0.01)
       if (preview || inVR) vr.setModel(model, modelSize, modelName)
-      else scene.add(model)
+      else { scene.add(model); look.shadow.fit(model) }
       if (!inVR && !preview) resetCamera()
       vr.setStatus('', canNavigate)
       callbacks.onLoading(false, false)
@@ -208,8 +216,17 @@ export function createGalleryRuntime(container, modules, callbacks, settings) {
       callbacks.onLoading(false, true)
     })
   }
+  // `url` is a panorama image, or null for the procedural neutral studio.
   function loadEnvironment(url) {
     const version = ++environmentVersion
+    if (!url) {
+      neutralTarget ??= createNeutralEnvironment(THREE, renderer, pmrem)
+      scene.environment = neutralTarget.texture
+      environmentTarget?.dispose()
+      environmentTarget = null
+      look.update({ proceduralEnvironment: true })
+      return
+    }
     new THREE.TextureLoader().load(url, (texture) => {
       if (disposed || version !== environmentVersion) { texture.dispose(); return }
       texture.colorSpace = THREE.SRGBColorSpace
@@ -219,6 +236,7 @@ export function createGalleryRuntime(container, modules, callbacks, settings) {
       scene.environment = next.texture
       environmentTarget?.dispose()
       environmentTarget = next
+      look.update({ proceduralEnvironment: false })
     }, undefined, () => {})
   }
   const handleDoubleClick = (event) => { event.preventDefault(); resetCamera() }
@@ -245,6 +263,8 @@ export function createGalleryRuntime(container, modules, callbacks, settings) {
   renderer.domElement.addEventListener('pointercancel', handlePointerCancel)
   const runtime = {
     scene, THREE, loadModel, loadEnvironment, enterVR, exitVR,
+    /** Update tone mapping, exposure, shadow and fill-light options. */
+    setLook(options) { look.update(options) },
     autoRotate: settings.autoRotate,
     environmentRotation: THREE.MathUtils.degToRad(settings.rotation),
     setPreview(value) {
@@ -269,8 +289,10 @@ export function createGalleryRuntime(container, modules, callbacks, settings) {
       renderer.domElement.removeEventListener('pointerdown', handlePointerDown)
       renderer.domElement.removeEventListener('pointerup', handlePointerUp)
       renderer.domElement.removeEventListener('pointercancel', handlePointerCancel)
+      look.dispose()
       disposeObject(scene)
       environmentTarget?.dispose()
+      neutralTarget?.dispose()
       pmrem.dispose()
       renderer.dispose()
       renderer.domElement.remove()
@@ -299,6 +321,7 @@ export function createGalleryRuntime(container, modules, callbacks, settings) {
       if (touchPointers.size >= 2) targetZoomDistance = camera.position.distanceTo(controls.target)
     }
     vr.update(frame, time)
+    if (!preview && !inVR) look.shadow.render(renderer, scene)
     renderer.render(scene, camera)
   })
   return runtime
