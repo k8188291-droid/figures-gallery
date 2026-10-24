@@ -91,13 +91,18 @@ async function handleNavigation(request) {
 // Cache-first for GLBs, keyed by URL. Replacing a model under the same name
 // keeps serving the cached copy to returning visitors; publish changes under
 // a new file name.
-async function handleModel(request) {
+// The response is returned while it is still downloading and the cache copy
+// is written in the background, so the page sees real download progress.
+// Awaiting cache.put() first would hold the page at 0% until the whole file
+// had arrived.
+async function handleModel(event) {
+  const { request } = event
   const cache = await caches.open(MODEL_CACHE)
   const cached = await cache.match(request)
   if (cached && !cached.redirected) return cached
 
   const response = await fetch(request)
-  if (isCacheable(response)) await cache.put(request, response.clone())
+  if (isCacheable(response)) event.waitUntil(cache.put(request, response.clone()).catch(() => {}))
   return response
 }
 
@@ -129,5 +134,5 @@ self.addEventListener('fetch', (event) => {
   // cached.
   if (!isModel || event.request.headers.has('range')) return
 
-  event.respondWith(handleModel(event.request))
+  event.respondWith(handleModel(event))
 })
