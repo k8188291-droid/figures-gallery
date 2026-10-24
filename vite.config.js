@@ -35,7 +35,7 @@ function modelManifestPlugin(source) {
   }
 }
 
-export default defineConfig(async () => {
+export default defineConfig(async ({ command }) => {
   const manifest = await readFile(resolve('.generated-assets/models.js'), 'utf8')
 
   return {
@@ -46,7 +46,10 @@ export default defineConfig(async () => {
       react(),
       viteStaticCopy({
         targets: [
-          { src: '.generated-assets/models', dest: '.' },
+          // Production serves GLBs and thumbnails from R2 through the
+          // functions/models/ route, so they are not copied into dist. The
+          // dev server still serves the local models/ folder.
+          ...(command === 'serve' ? [{ src: '.generated-assets/models', dest: '.' }] : []),
           { src: '.generated-assets/enviroments', dest: '.' },
         ],
       }),

@@ -1,9 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
 import ThreeViewer from './ThreeViewer'
 
-const models = window.MODEL_LIST ?? []
 const modelHash = (name) => encodeURIComponent(name.replace(/\s+/g, '_'))
-const modelFromHash = () => {
+const modelFromHash = (models) => {
   const hash = window.location.hash.slice(1)
   const value = decodeURIComponent(hash)
   return models.find((model) => modelHash(model.name) === hash || model.name === value || model.id === value)
@@ -18,21 +17,21 @@ function EmptyViewer() {
       <div className="grid h-20 w-20 place-items-center rounded-full border border-stone-700 text-4xl">◇</div>
       <div>
         <p className="text-lg font-medium text-stone-200">No models found</p>
-        <p className="mt-2 max-w-sm text-sm leading-6">Add GLB files to the models folder, then restart the development server.</p>
+        <p className="mt-2 max-w-sm text-sm leading-6">Upload GLB files to the model bucket (or the local models folder during development), then reload.</p>
       </div>
     </div>
   )
 }
 
-function App() {
-  const initialModel = useMemo(() => modelFromHash() ?? models[0], [])
+function App({ models }) {
+  const initialModel = useMemo(() => modelFromHash(models) ?? models[0], [models])
   const [sidebarOpen, setSidebarOpen] = useState(() => window.innerWidth >= 1280)
   const [previewTextVisible, setPreviewTextVisible] = useState(true)
-  const folders = useMemo(() => [...new Set(models.map((model) => model.folder))], [])
+  const folders = useMemo(() => [...new Set(models.map((model) => model.folder))], [models])
   const [folder, setFolder] = useState(initialModel?.folder ?? folders[0] ?? '')
   const visibleModels = useMemo(
     () => models.filter((model) => model.folder === folder),
-    [folder],
+    [folder, models],
   )
   const [selectedId, setSelectedId] = useState(initialModel?.id)
   const selected = models.find((model) => model.id === selectedId) ?? visibleModels[0]
@@ -45,14 +44,14 @@ function App() {
 
   useEffect(() => {
     const selectFromHash = () => {
-      const model = modelFromHash()
+      const model = modelFromHash(models)
       if (!model) return
       setFolder(model.folder)
       setSelectedId(model.id)
     }
     window.addEventListener('hashchange', selectFromHash)
     return () => window.removeEventListener('hashchange', selectFromHash)
-  }, [])
+  }, [models])
 
   const selectModel = (model) => {
     setSelectedId(model.id)

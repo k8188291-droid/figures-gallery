@@ -74,6 +74,12 @@ self.addEventListener('fetch', (event) => {
   // therefore do not trigger this fetch handler.
   const isNavigation = event.request.mode === 'navigate' && sameOrigin
   const isModel = sameOrigin && url.pathname.toLowerCase().endsWith('.glb')
+  const isApi = sameOrigin && url.pathname.startsWith(new URL('api/', self.registration.scope).pathname)
+
+  // The model list (api/models) is always fetched from the network so models
+  // added to or removed from the bucket appear on the next page load. Not
+  // calling respondWith() leaves the request to the browser.
+  if (isApi) return
 
   if (isNavigation) {
     // Stale-while-revalidate keeps startup fast: return the cached page now and
@@ -94,7 +100,11 @@ self.addEventListener('fetch', (event) => {
     return
   }
 
-  if (!isModel) return
+  // GLBs are cached permanently by URL (cache-first). Replacing a model under
+  // the same name therefore keeps serving the cached copy to returning
+  // visitors; publish changes under a new file name. Range requests are left
+  // to the network because partial (206) responses cannot be cached.
+  if (!isModel || event.request.headers.has('range')) return
 
   event.respondWith(
     caches.open(MODEL_CACHE).then(async (cache) => {

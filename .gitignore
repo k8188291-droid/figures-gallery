@@ -2,6 +2,7 @@ node_modules/
 dist/
 .generated-assets/
 generated/
-models/
+/models/
 .DS_Store
 *.log
+.wrangler/

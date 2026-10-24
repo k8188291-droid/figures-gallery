@@ -1,0 +1,10 @@
+# Cloudflare Pages configuration (used by `wrangler pages deploy` and
+# `wrangler pages dev`). Models are read at runtime from the R2 bucket below;
+# see docs/04.r2-models.md.
+name = "holo-figures"
+pages_build_output_dir = "dist"
+compatibility_date = "2025-09-01"
+
+[[r2_buckets]]
+binding = "MODELS"
+bucket_name = "holo-figures-models"
