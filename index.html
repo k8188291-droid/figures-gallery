@@ -6,6 +6,11 @@
     <meta name="theme-color" content="#11120f" />
     <meta name="description" content="Interactive 3D model portfolio" />
     <title>3D Model Archive</title>
+    <link rel="icon" type="image/png" id="favicon" href="favicons/01.png" />
+    <script>
+      // Pick one of the 16 favicons (public/favicons/01.png–16.png) per visit.
+      document.getElementById('favicon').href = `favicons/${String(1 + Math.floor(Math.random() * 16)).padStart(2, '0')}.png`
+    </script>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+TC:wght@400;500;600;700&display=swap" rel="stylesheet" />
