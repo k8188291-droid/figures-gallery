@@ -1,13 +1,27 @@
 const MODEL_CACHE = '3d-gallery-models-v1'
-const PAGE_CACHE = '3d-gallery-pages-v1'
+// v2: v1 could hold a redirected index Response (see fetchLatestIndex).
+const PAGE_CACHE = '3d-gallery-pages-v2'
 const CACHE_PREFIXES = ['3d-gallery-models-', '3d-gallery-pages-']
 
-const indexUrl = () => new URL('index.html', self.registration.scope).href
+// The app shell is requested at the scope root. Hosts such as Cloudflare Pages
+// redirect /index.html to /, and a redirected Response must never be used to
+// answer a navigation (the browser rejects it with a network error), so the
+// shell is fetched from the root and any redirected Response is re-wrapped.
+const indexUrl = () => self.registration.scope
+
+async function unredirected(response) {
+  if (!response.redirected) return response
+  return new Response(await response.blob(), {
+    status: response.status,
+    statusText: response.statusText,
+    headers: response.headers,
+  })
+}
 
 async function fetchLatestIndex() {
   const url = new URL(indexUrl())
   url.searchParams.set('__sw_check', Date.now().toString())
-  return fetch(url, { cache: 'no-store' })
+  return unredirected(await fetch(url, { cache: 'no-store' }))
 }
 
 // Compare the cached app shell with a cache-busted copy from the host.
@@ -92,7 +106,7 @@ self.addEventListener('fetch', (event) => {
         if (cached) return cached
 
         const response = await fetch(event.request)
-        if (response.ok) await cache.put(indexUrl(), response.clone())
+        if (response.ok) await cache.put(indexUrl(), await unredirected(response.clone()))
         return response
       }),
     )
