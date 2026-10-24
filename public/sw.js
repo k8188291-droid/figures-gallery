@@ -1,15 +1,26 @@
+// The GLB cache name is unchanged on purpose: models stay cached permanently
+// by URL, so returning visitors keep their downloaded models across deploys.
 const MODEL_CACHE = '3d-gallery-models-v1'
-// v2: v1 could hold a redirected index Response (see fetchLatestIndex).
+// v2: v1 could hold a redirected app-shell Response (see below) that broke
+// every later visit. Activating this worker deletes the v1 entry.
 const PAGE_CACHE = '3d-gallery-pages-v2'
 const CACHE_PREFIXES = ['3d-gallery-models-', '3d-gallery-pages-']
 
-// The app shell is requested at the scope root. Hosts such as Cloudflare Pages
-// redirect /index.html to /, and a redirected Response must never be used to
-// answer a navigation (the browser rejects it with a network error), so the
-// shell is fetched from the root and any redirected Response is re-wrapped.
-const indexUrl = () => self.registration.scope
+// The app shell is stored under the scope root ("./"), its real URL. Hosts
+// such as Cloudflare Pages answer /index.html with a 308 redirect to /, and a
+// redirected Response must never answer a navigation: the browser rejects it
+// ("a redirected response was used for a request whose redirect mode is not
+// 'follow'") and the page fails to load.
+const shellUrl = () => self.registration.scope
 
-async function unredirected(response) {
+// Only plain, successful, same-origin responses are stored.
+const isCacheable = (response) => response.ok
+  && response.status === 200
+  && response.type === 'basic'
+  && !response.redirected
+
+// Rebuild a redirected Response as a clean one so it can answer a navigation.
+async function clean(response) {
   if (!response.redirected) return response
   return new Response(await response.blob(), {
     status: response.status,
@@ -18,38 +29,24 @@ async function unredirected(response) {
   })
 }
 
-async function fetchLatestIndex() {
-  const url = new URL(indexUrl())
-  url.searchParams.set('__sw_check', Date.now().toString())
-  return unredirected(await fetch(url, { cache: 'no-store' }))
+async function storeShell(response) {
+  if (!isCacheable(response)) return
+  const cache = await caches.open(PAGE_CACHE)
+  await cache.put(shellUrl(), response)
 }
 
-// Compare the cached app shell with a cache-busted copy from the host.
-// Updating Cache Storage only affects future requests: a document that has
-// already been delivered, parsed, and started cannot have its Response body
-// replaced in place. Therefore, when a background check finds a new index,
-// the page is notified and performs one reload so the next navigation receives
-// the updated cached document.
-async function checkIndex({ notify = true } = {}) {
+async function cachedShell() {
   const cache = await caches.open(PAGE_CACHE)
-  const cached = await cache.match(indexUrl())
-  const latest = await fetchLatestIndex()
-  if (!latest.ok) return false
+  const cached = await cache.match(shellUrl())
+  return cached ? clean(cached) : undefined
+}
 
-  if (!cached) {
-    await cache.put(indexUrl(), latest.clone())
-    return false
-  }
-
-  const [cachedHtml, latestHtml] = await Promise.all([cached.text(), latest.clone().text()])
-  if (cachedHtml === latestHtml) return false
-
-  await cache.put(indexUrl(), latest.clone())
-  if (notify) {
-    const clients = await self.clients.matchAll({ type: 'window', includeUncontrolled: true })
-    clients.forEach((client) => client.postMessage({ type: 'INDEX_UPDATED' }))
-  }
-  return true
+// Refresh the offline copy of the app shell.
+async function refreshShell() {
+  const url = new URL(shellUrl())
+  url.searchParams.set('__sw_check', Date.now().toString())
+  const response = await fetch(url, { cache: 'no-store' })
+  if (response.ok) await storeShell(await clean(response))
 }
 
 self.addEventListener('install', () => {
@@ -71,9 +68,38 @@ self.addEventListener('activate', (event) => {
 
 self.addEventListener('message', (event) => {
   if (event.data?.type === 'CHECK_INDEX') {
-    event.waitUntil(checkIndex().catch(() => false))
+    event.waitUntil(refreshShell().catch(() => undefined))
   }
 })
+
+// Network-first for navigations: always serve the latest page when online,
+// fall back to the stored shell when offline.
+async function handleNavigation(request) {
+  try {
+    const response = await fetch(request)
+    // Redirects reach a navigation as opaque redirects; pass them through so
+    // the browser follows them, but never store them.
+    if (isCacheable(response)) await storeShell(response.clone()).catch(() => undefined)
+    return response
+  } catch (error) {
+    const cached = await cachedShell()
+    if (cached) return cached
+    throw error
+  }
+}
+
+// Cache-first for GLBs, keyed by URL. Replacing a model under the same name
+// keeps serving the cached copy to returning visitors; publish changes under
+// a new file name.
+async function handleModel(request) {
+  const cache = await caches.open(MODEL_CACHE)
+  const cached = await cache.match(request)
+  if (cached && !cached.redirected) return cached
+
+  const response = await fetch(request)
+  if (isCacheable(response)) await cache.put(request, response.clone())
+  return response
+}
 
 self.addEventListener('fetch', (event) => {
   if (event.request.method !== 'GET') return
@@ -82,52 +108,26 @@ self.addEventListener('fetch', (event) => {
   const sameOrigin = url.origin === self.location.origin
   // A Service Worker sees every GET request, including JS, CSS, images, fonts,
   // API calls, and GLB files. `mode === 'navigate'` limits the app-shell
-  // response to top-level document navigations, including SPA routes that do
-  // not end in index.html. Without this guard, an asset request could receive
-  // HTML and fail to parse. Hash-only changes do not make a network request and
+  // handling to top-level document navigations, including SPA routes that do
+  // not end in index.html. Hash-only changes do not make a network request and
   // therefore do not trigger this fetch handler.
   const isNavigation = event.request.mode === 'navigate' && sameOrigin
   const isModel = sameOrigin && url.pathname.toLowerCase().endsWith('.glb')
   const isApi = sameOrigin && url.pathname.startsWith(new URL('api/', self.registration.scope).pathname)
 
-  // The model list (api/models) is always fetched from the network so models
-  // added to or removed from the bucket appear on the next page load. Not
-  // calling respondWith() leaves the request to the browser.
+  // The model list (api/models) always goes to the network so models added to
+  // or removed from the bucket appear on the next page load. Not calling
+  // respondWith() leaves the request to the browser.
   if (isApi) return
 
   if (isNavigation) {
-    // Stale-while-revalidate keeps startup fast: return the cached page now and
-    // check for a newer copy in the background. A network-first implementation
-    // could return the latest Response directly and avoid a second reload, but
-    // every navigation would then wait for the network and be slower offline.
-    event.respondWith(
-      caches.open(PAGE_CACHE).then(async (cache) => {
-        const cached = await cache.match(indexUrl())
-        if (cached) return cached
-
-        const response = await fetch(event.request)
-        if (response.ok) await cache.put(indexUrl(), await unredirected(response.clone()))
-        return response
-      }),
-    )
-    event.waitUntil(checkIndex().catch(() => false))
+    event.respondWith(handleNavigation(event.request))
     return
   }
 
-  // GLBs are cached permanently by URL (cache-first). Replacing a model under
-  // the same name therefore keeps serving the cached copy to returning
-  // visitors; publish changes under a new file name. Range requests are left
-  // to the network because partial (206) responses cannot be cached.
+  // Range requests are left to the network: partial (206) responses cannot be
+  // cached.
   if (!isModel || event.request.headers.has('range')) return
 
-  event.respondWith(
-    caches.open(MODEL_CACHE).then(async (cache) => {
-      const cached = await cache.match(event.request)
-      if (cached) return cached
-
-      const response = await fetch(event.request)
-      if (response.ok) await cache.put(event.request, response.clone())
-      return response
-    }),
-  )
+  event.respondWith(handleModel(event.request))
 })
