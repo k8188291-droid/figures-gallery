@@ -6,6 +6,8 @@
 
 PC VR 展示桌、桌面預覽與 VIVE XR Elite / Pimax Crystal Super 的測試方式請參考 [VR 使用說明](docs/02.vr-preview.md)。
 
+預設的 model-viewer 風格打光、色調映射與接觸陰影請參考 [攝影棚外觀](docs/03.studio-look.md)。
+
 ## 專案結構
 
 ```text
