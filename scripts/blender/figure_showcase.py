@@ -174,20 +174,6 @@ def add_area_light(name, location, target, size, power, color=(1, 1, 1), size_y=
     return obj
 
 
-def add_spot_light(name, location, target, power, size_deg, radius=0.05, blend=0.8, color=(1, 1, 1)):
-    data = bpy.data.lights.new(name, 'SPOT')
-    data.energy = power
-    data.spot_size = math.radians(size_deg)
-    data.spot_blend = blend
-    data.shadow_soft_size = radius
-    data.color = color
-    obj = bpy.data.objects.new(name, data)
-    bpy.context.collection.objects.link(obj)
-    obj.location = location
-    look_at(obj, target)
-    return obj
-
-
 def link_lights(lights, receivers):
     """Make `lights` illuminate only `receivers` (Cycles light linking)."""
     coll = bpy.data.collections.new('LightReceivers')
@@ -228,31 +214,6 @@ def set_world_hdri(path, strength, rotation_z):
     bpy.context.scene.world = world
     return env.image
 
-
-def brightest_direction(image):
-    """Azimuth/elevation (radians, Blender world space) of the brightest area of an equirect HDRI."""
-    import numpy as np
-    w, h = image.size
-    px = np.empty(w * h * 4, dtype=np.float32)
-    image.pixels.foreach_get(px)
-    lum = (px.reshape(h, w, 4)[..., :3] @ np.array([0.2126, 0.7152, 0.0722], dtype=np.float32))
-    # Downsample to find the brightest region rather than a single hot pixel.
-    f = 16
-    small = lum[:h // f * f, :w // f * f].reshape(h // f, f, w // f, f).mean(axis=(1, 3))
-    small[: small.shape[0] // 2 - 1] = 0  # ignore the lower hemisphere (floor bounce)
-    row, col = np.unravel_index(np.argmax(small), small.shape)
-    u = (col + 0.5) / small.shape[1]
-    v = (row + 0.5) / small.shape[0]
-    # Blender equirect: u = 0.5 - atan2(dy, -dx) / 2pi, v = 0.5 + elevation / pi (rows stored bottom-up)
-    phi = (0.5 - u) * 2 * math.pi
-    elevation = (v - 0.5) * math.pi
-    direction = Vector((-math.cos(phi), math.sin(phi), 0))
-    return math.atan2(direction.y, direction.x), elevation
-
-
-# --------------------------------------------------------------------------
-# Figure and props
-# --------------------------------------------------------------------------
 
 def import_asset(path):
     before = set(bpy.data.objects)
