@@ -577,7 +577,7 @@ def build_wall_shelf(cache):
 def build_desk_props(cache):
     # Keyboard, front-left.
     kb_rot = math.radians(10)
-    kb = Vector((-0.34, 0.2, 0.0))
+    kb = Vector((-0.3, 0.08, 0.0))
     rot = lambda v: Vector((v.x * math.cos(kb_rot) - v.y * math.sin(kb_rot),
                              v.x * math.sin(kb_rot) + v.y * math.cos(kb_rot), v.z))
     add_box('Keyboard', (0.36, 0.125, 0.02), kb + Vector((0, 0, 0.01)),
@@ -655,7 +655,7 @@ def build_desk(args):
     add_area_light('RoomBounce', (0.4, -1.4, 0.6), (0, 0, h * 0.5), 1.5, 18, color=(1.0, 0.85, 0.7))
 
     add_camera(bounds, figure, args, args.angle if args.angle is not None else 10, 7, lens=35,
-               fstop=args.fstop or 8, fill=0.7, aim=0.6)
+               fstop=args.fstop or 8, fill=0.8, aim=0.5)
 
 
 # --------------------------------------------------------------------------
