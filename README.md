@@ -6,6 +6,8 @@
 
 PC VR 展示桌、桌面預覽與 VIVE XR Elite / Pimax Crystal Super 的測試方式請參考 [VR 使用說明](docs/02.vr-preview.md)。
 
+用 Blender 渲染手辦展示圖（攝影棚、晨光書桌場景）請參考 [Blender 展示場景](docs/03.blender-showcase.md)。
+
 ## 專案結構
 
 ```text
