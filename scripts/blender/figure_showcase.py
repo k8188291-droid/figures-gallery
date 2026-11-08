@@ -5,14 +5,14 @@ Usage:
       --model "models/holo/holo coffee.glb" --yaw -90 --scene studio --out renders/holo_coffee_studio.png
 
 Scenes:
-  studio  Black acrylic base on a dark warm seamless backdrop. Low-key product
-          lighting: side softbox, two rim strips and a background glow.
-  desk    Wooden desk by a sunny window (real interior HDRI), with a laptop,
-          books, a plant, stationery and a mug around the figure.
+  studio  High-key catalogue shot: warm seamless backdrop (peach to caramel),
+          large soft boxes, low contrast, no base.
+  desk    Cozy desk by a window: a modelled room with real blinds, so the
+          morning sun falls on the desk and the figure in stripes; keyboard,
+          stacked books with a plant, mug, wall shelf and lamp; light haze.
 
-Both scenes use real-world scale (figure ~15 cm), an 85 mm lens and shallow
-depth of field. Focus is placed by ray casting onto the figure's face, so the
-figure is sharp and the set falls off into bokeh.
+Focus is placed by ray casting onto the figure's face, so the figure is
+always sharp.
 
 The desk scene downloads CC0 assets from Poly Haven (polyhaven.com) on first
 run and caches them in .cache/polyhaven.
@@ -400,80 +400,98 @@ def focus_distance(cam, figure_meshes, bounds, focus_height):
 
 
 # --------------------------------------------------------------------------
-# Scene: studio
+# Shared geometry
 # --------------------------------------------------------------------------
 
-def build_studio(args):
-    base_r, base_h = 0.085, 0.012
-    base = add_cylinder('AcrylicBase', base_r, base_h, (0, 0, base_h / 2), bevel=0.0025,
-                        mat=principled('BlackAcrylic', '#050505', roughness=0.03,
-                                       **{'Coat Weight': 1.0, 'Coat Roughness': 0.02}))
+def add_box(name, size, location, mat=None, bevel=0.0, rotation=(0, 0, 0)):
+    bpy.ops.mesh.primitive_cube_add(size=1, location=location, rotation=rotation)
+    obj = bpy.context.active_object
+    obj.name = name
+    obj.scale = size
+    bpy.ops.object.transform_apply(scale=True)
+    if bevel:
+        mod = obj.modifiers.new('Bevel', 'BEVEL')
+        mod.width = bevel
+        mod.segments = 3
+        mod.limit_method = 'ANGLE'
+    if mat:
+        assign(obj, mat)
+    return obj
 
-    bounds, figure = import_figure(args.model, args.height, args.yaw, base_h)
-    lo, hi = bounds
-    need = max(abs(lo.x), abs(hi.x), abs(lo.y), abs(hi.y)) * 1.15
-    if need > base_r:
-        base.scale.x = base.scale.y = need / base_r
-    h = args.height
 
-    # Seamless cyclorama, set well back so it melts into a soft gradient.
-    cyc_mat = principled('Backdrop', '#4A3B31', 0.85)
-    mesh = bpy.data.meshes.new('Cyclorama')
+def add_cyclorama(name, mat, back, radius=0.5, width=6.0, top=4.0):
+    """Floor that curves up into a back wall at y=back (seamless photo backdrop)."""
+    mesh = bpy.data.meshes.new(name)
     bm = bmesh.new()
-    radius, width, back = 0.5, 6.0, 1.1
     profile = [(y, 0.0) for y in (-3.0, -1.0, 0.0, back)]
     for i in range(1, 16):
         t = i / 16 * math.pi / 2
         profile.append((back + math.sin(t) * radius, radius - math.cos(t) * radius))
-    profile += [(back + radius, radius), (back + radius, 2.0), (back + radius, 4.0)]
+    profile += [(back + radius, radius), (back + radius, top / 2), (back + radius, top)]
     rows = [[bm.verts.new((x, y, z)) for (y, z) in profile] for x in (-width / 2, width / 2)]
     for i in range(len(profile) - 1):
         bm.faces.new((rows[0][i], rows[1][i], rows[1][i + 1], rows[0][i + 1]))
     bm.to_mesh(mesh)
     bm.free()
-    cyc = bpy.data.objects.new('Cyclorama', mesh)
-    bpy.context.collection.objects.link(cyc)
-    assign(cyc, cyc_mat)
-    for poly in cyc.data.polygons:
+    obj = bpy.data.objects.new(name, mesh)
+    bpy.context.collection.objects.link(obj)
+    assign(obj, mat)
+    for poly in obj.data.polygons:
         poly.use_smooth = True
+    return obj
 
-    face = (0, 0, base_h + h * 0.7)
-    body = (0, 0, base_h + h * 0.5)
-    # Key: medium softbox high on the left, narrow spread so it shapes the
-    # figure instead of flooding the set. No front fill: the right side falls
-    # into shadow for depth.
-    add_area_light('Key', (-0.45, -0.22, 0.40), face, 0.6, 2.8, color=(1.0, 0.98, 0.95), spread=26)
-    # Rim strips behind both sides to separate hair and tail from the backdrop.
-    # They are light-linked to the figure only, so they do not spill onto the floor.
-    rims = [
-        add_area_light('RimL', (-0.30, 0.32, 0.26), body, 0.04, 2.0, color=(1.0, 0.93, 0.86), size_y=0.4, spread=35),
-        add_area_light('RimR', (0.32, 0.28, 0.22), body, 0.04, 2.5, color=(1.0, 0.93, 0.86), size_y=0.4, spread=40),
-    ]
-    link_lights(rims, figure)
-    # Faint bounce from the right so shadows are not crushed.
-    add_area_light('Bounce', (0.5, -0.35, 0.05), body, 0.5, 0.8, color=(1.0, 0.9, 0.8))
-    # Warm glow on the backdrop behind the figure, falling off to dark edges.
-    add_spot_light('BackdropGlow', (0.2, 0.5, 0.1), (0.6, back + 0.35, 0.14), 60, 60, blend=1.0,
-                   color=(1.0, 0.8, 0.6))
-    set_world_color((0.02, 0.015, 0.012), 1.0)
 
-    add_camera(bounds, figure, args, args.angle if args.angle is not None else -20, 7, lens=85,
-               fstop=args.fstop or 5.6, fill=0.7)
+def speckled_ceramic(name, color, speck='#6B5A4A'):
+    mat = principled(name, color, 0.35, **{'Coat Weight': 0.5, 'Coat Roughness': 0.1})
+    nt = mat.node_tree
+    noise = nt.nodes.new('ShaderNodeTexNoise')
+    noise.inputs['Scale'].default_value = 400.0
+    ramp = nt.nodes.new('ShaderNodeValToRGB')
+    ramp.color_ramp.elements[0].position = 0.68
+    ramp.color_ramp.elements[0].color = hex_rgba(color)
+    ramp.color_ramp.elements[1].position = 0.7
+    ramp.color_ramp.elements[1].color = hex_rgba(speck)
+    nt.links.new(noise.outputs['Fac'], ramp.inputs['Fac'])
+    nt.links.new(ramp.outputs['Color'], nt.nodes['Principled BSDF'].inputs['Base Color'])
+    return mat
+
+
+# --------------------------------------------------------------------------
+# Scene: studio
+# --------------------------------------------------------------------------
+
+def build_studio(args):
+    """High-key catalogue shot: soft wrap-around light on a warm seamless backdrop."""
+    h = args.height
+    bounds, figure = import_figure(args.model, h, args.yaw, 0.0)
+
+    backdrop = add_cyclorama('Cyclorama', principled('Backdrop', '#C48E70', 0.95), back=0.9, radius=0.5)
+
+    face = (0, 0, h * 0.72)
+    body = (0, 0, h * 0.5)
+    # Big, close softboxes = soft shadows and low contrast, like a product catalogue.
+    add_area_light('Key', (-0.55, -0.55, 0.42), face, 1.0, 14, color=(1.0, 0.96, 0.92))
+    add_area_light('Fill', (0.65, -0.45, 0.22), body, 1.2, 6, color=(1.0, 0.97, 0.94))
+    add_area_light('Top', (0.0, -0.05, 0.7), body, 0.8, 4)
+    rim = add_area_light('Rim', (0.28, 0.32, 0.30), body, 0.12, 2.0, color=(1.0, 0.92, 0.84), size_y=0.5)
+    link_lights([rim], figure)
+    # Separate wash on the backdrop: bright peach on the left, falling to caramel on the right.
+    wash = add_area_light('BackdropWash', (-0.9, 0.1, 0.7), (-0.6, 1.4, 0.3), 1.0, 90, color=(1.0, 0.9, 0.8))
+    link_lights([wash], [backdrop])
+    set_world_color((0.55, 0.42, 0.34), 0.35)
+
+    add_camera(bounds, figure, args, args.angle if args.angle is not None else 15, 12, lens=85,
+               fstop=args.fstop or 11, fill=0.8)
 
 
 # --------------------------------------------------------------------------
 # Scene: desk
 # --------------------------------------------------------------------------
 
-DESK_HDRI = 'photo_studio_loft_hall'
 DESK_WOOD = 'oak_veneer_01'
-# (asset id, location on the desk, yaw in degrees, scale)
-DESK_PROPS = [
-    ('classic_laptop', (0.42, 0.55, 0.0), -30, 1.0),
-    ('decorative_book_set_01', (-0.40, 0.62, 0.0), 12, 1.0),
-    ('potted_plant_04', (0.32, 0.40, 0.0), 0, 0.55),
-    ('stationery_supplies', (0.02, 0.50, 0.0), 10, 1.0),
-]
+DESK_OUTSIDE = 'autumn_forest_04'
+WALL_Y = 1.0             # back wall (window wall) behind the desk
+WINDOW = (-0.95, -0.08, 0.05, 1.2)   # x0, x1, z0, z1 of the window opening
 
 
 def textured_material(name, maps, tile_m):
@@ -497,30 +515,142 @@ def textured_material(name, maps, tile_m):
     normal = nt.nodes.new('ShaderNodeNormalMap')
     nt.links.new(tex(maps['nor'], 'Non-Color').outputs['Color'], normal.inputs['Color'])
     nt.links.new(normal.outputs['Normal'], bsdf.inputs['Normal'])
-    bsdf.inputs['Coat Weight'].default_value = 0.25
-    bsdf.inputs['Coat Roughness'].default_value = 0.2
+    bsdf.inputs['Coat Weight'].default_value = 0.2
+    bsdf.inputs['Coat Roughness'].default_value = 0.25
     return mat
 
 
-def build_desk(args):
-    h = args.height
-    bounds, figure = import_figure(args.model, h, args.yaw, 0.0)
+def build_room(wood, sun_dir):
+    """A simple room: window wall with blinds, side walls, floor and ceiling.
 
-    # Desk top.
-    bpy.ops.mesh.primitive_plane_add(size=1, location=(0, 0.35, 0))
-    desk = bpy.context.active_object
-    desk.name = 'Desk'
-    desk.scale = (2.2, 1.5, 1)
-    bpy.ops.object.transform_apply(scale=True)
-    assign(desk, textured_material('DeskWood', polyhaven_texture(DESK_WOOD, args.cache), 0.6))
+    Everything the camera sees is real geometry lit by the same sun, so the
+    figure and the background always match.
+    """
+    x0, x1, z0, z1 = WINDOW
+    floor_z, ceil_z, half_w, front_y = -0.75, 1.9, 2.4, -2.6
+    t = 0.08
+    wall = principled('Plaster', '#EADFD0', 0.92)
+    wy = WALL_Y + t / 2
+    add_box('WallLeft', (x0 + half_w, t, ceil_z - floor_z), ((x0 - half_w) / 2, wy, (ceil_z + floor_z) / 2), wall)
+    add_box('WallRight', (half_w - x1, t, ceil_z - floor_z), ((x1 + half_w) / 2, wy, (ceil_z + floor_z) / 2), wall)
+    add_box('WallBelow', (x1 - x0, t, z0 - floor_z), ((x0 + x1) / 2, wy, (z0 + floor_z) / 2), wall)
+    add_box('WallAbove', (x1 - x0, t, ceil_z - z1), ((x0 + x1) / 2, wy, (z1 + ceil_z) / 2), wall)
+    add_box('SideL', (t, WALL_Y - front_y, ceil_z - floor_z), (-half_w, (WALL_Y + front_y) / 2, (ceil_z + floor_z) / 2), wall)
+    add_box('SideR', (t, WALL_Y - front_y, ceil_z - floor_z), (half_w, (WALL_Y + front_y) / 2, (ceil_z + floor_z) / 2), wall)
+    add_box('Front', (2 * half_w, t, ceil_z - floor_z), (0, front_y, (ceil_z + floor_z) / 2), wall)
+    add_box('Ceiling', (2 * half_w, WALL_Y - front_y, t), (0, (WALL_Y + front_y) / 2, ceil_z), wall)
+    add_box('Floor', (2 * half_w, WALL_Y - front_y, t), (0, (WALL_Y + front_y) / 2, floor_z),
+            principled('Floor', '#8A6A50', 0.6))
 
-    for asset_id, location, yaw, scale in DESK_PROPS:
-        root, meshes = import_asset(polyhaven_model(asset_id, args.cache))
-        place(root, meshes, location, yaw, scale)
+    # Window frame, sill and horizontal blinds (real slats so sunlight comes through in stripes).
+    frame = principled('Frame', '#F2ECE2', 0.5)
+    fw = 0.035
+    add_box('FrameL', (fw, t + 0.01, z1 - z0), (x0 + fw / 2, wy, (z0 + z1) / 2), frame)
+    add_box('FrameR', (fw, t + 0.01, z1 - z0), (x1 - fw / 2, wy, (z0 + z1) / 2), frame)
+    add_box('FrameT', (x1 - x0, t + 0.01, fw), ((x0 + x1) / 2, wy, z1 - fw / 2), frame)
+    add_box('FrameM', (fw * 0.7, t, z1 - z0), ((x0 + x1) / 2, wy, (z0 + z1) / 2), frame)
+    slat_mat = principled('Blinds', '#D9BE98', 0.55)
+    pitch, depth = 0.026, 0.03
+    # Tilt the slats so they block about half of the sun (crisp light/shadow
+    # stripes) while looking almost closed from the low camera.
+    slope = math.atan2(sun_dir.z, abs(sun_dir.y))
+    tilt = slope + math.asin(min(1.0, 0.5 * pitch / depth))
+    n = int((z1 - z0 - 0.04) / pitch)
+    for i in range(n):
+        add_box(f'Slat{i:02d}', (x1 - x0 - 2 * fw, depth, 0.0015),
+                ((x0 + x1) / 2, WALL_Y - 0.03, z1 - 0.03 - i * pitch), slat_mat,
+                rotation=(tilt, 0, 0))
+    # Head rail.
+    add_box('BlindRail', (x1 - x0, 0.045, 0.03), ((x0 + x1) / 2, WALL_Y - 0.03, z1 - 0.005), slat_mat)
 
-    # Mug (simple, but with a proper rim and coffee).
-    ceramic = principled('Ceramic', '#EFE7DA', 0.25, **{'Coat Weight': 0.6})
-    mug = add_cylinder('Mug', 0.04, 0.09, (0.17, 0.17, 0.045), mat=ceramic, bevel=0.003)
+    # Faint haze so the sun beams through the blinds are visible.
+    haze = new_material('Haze')
+    nt = haze.node_tree
+    nt.nodes.remove(nt.nodes['Principled BSDF'])
+    vol = nt.nodes.new('ShaderNodeVolumePrincipled')
+    vol.inputs['Density'].default_value = 0.1
+    vol.inputs['Color'].default_value = hex_rgba('#FFF4E6')
+    vol.inputs['Anisotropy'].default_value = 0.5
+    nt.links.new(vol.outputs[0], nt.nodes['Material Output'].inputs['Volume'])
+    add_box('RoomHaze', (2 * half_w - 0.1, WALL_Y - front_y - 0.1, ceil_z - floor_z - 0.1),
+            (0, (WALL_Y + front_y) / 2, (ceil_z + floor_z) / 2), haze)
+
+    # Desk top against the window wall.
+    add_box('Desk', (2.6, WALL_Y + 0.7, 0.03), (0, (WALL_Y - 0.7) / 2, -0.015), wood, bevel=0.003)
+
+
+def build_wall_shelf(cache):
+    """Wooden wall shelf on the right: books, a warm lamp and a plant."""
+    wood = principled('ShelfWood', '#B08356', 0.5)
+    x0, x1 = 0.1, 0.85
+    for z in (0.1, 0.36):
+        add_box(f'Shelf{z}', (x1 - x0, 0.2, 0.02), ((x0 + x1) / 2, WALL_Y - 0.1, z), wood, bevel=0.002)
+    add_box('ShelfSide', (0.02, 0.2, 0.4), (x1 + 0.01, WALL_Y - 0.1, 0.2), wood)
+
+    covers = ['#8C5A3C', '#E3D6C0', '#4F6650', '#C2A27C', '#6B3A2E', '#D9CBB4', '#3E4E5E', '#B98A5A']
+    x = 0.14
+    for i, color in enumerate(covers):
+        bw = 0.022 + 0.008 * ((i * 7) % 3)
+        bh = 0.15 + 0.025 * ((i * 5) % 4)
+        add_box(f'ShelfBook{i}', (bw, 0.15, bh), (x + bw / 2, WALL_Y - 0.1, 0.11 + bh / 2),
+                principled(f'ShelfBook{i}', color, 0.6), bevel=0.002)
+        x += bw + 0.004
+    # Small glowing lamp.
+    add_cylinder('LampBase', 0.02, 0.04, (0.5, WALL_Y - 0.1, 0.13), principled('Brass', '#B08D57', 0.3, Metallic=1.0))
+    glow = new_material('LampGlow')
+    nt = glow.node_tree
+    nt.nodes.remove(nt.nodes['Principled BSDF'])
+    em = nt.nodes.new('ShaderNodeEmission')
+    em.inputs['Color'].default_value = hex_rgba('#FFD39A')
+    em.inputs['Strength'].default_value = 6
+    nt.links.new(em.outputs[0], nt.nodes['Material Output'].inputs['Surface'])
+    bpy.ops.mesh.primitive_uv_sphere_add(radius=0.035, location=(0.5, WALL_Y - 0.1, 0.18))
+    bulb = bpy.context.active_object
+    bpy.ops.object.shade_smooth()
+    assign(bulb, glow)
+    # Plant on the top shelf.
+    root, meshes = import_asset(polyhaven_model('potted_plant_04', cache))
+    place(root, meshes, (0.65, WALL_Y - 0.1, 0.11), 30, height=0.16)
+
+
+def build_desk_props(cache):
+    # Keyboard, front-left.
+    kb_rot = math.radians(10)
+    kb = Vector((-0.25, -0.04, 0.0))
+    rot = lambda v: Vector((v.x * math.cos(kb_rot) - v.y * math.sin(kb_rot),
+                             v.x * math.sin(kb_rot) + v.y * math.cos(kb_rot), v.z))
+    add_box('Keyboard', (0.36, 0.125, 0.02), kb + Vector((0, 0, 0.01)),
+            principled('KbCase', '#55585C', 0.45), bevel=0.004, rotation=(0, 0, kb_rot))
+    light_key = principled('KeyLight', '#EEEAE2', 0.4)
+    dark_key = principled('KeyDark', '#A9ABAD', 0.4)
+    for row in range(5):
+        for col in range(15):
+            local = Vector((-0.164 + col * 0.0234, -0.046 + row * 0.0234, 0.027))
+            mat = dark_key if col in (0, 14) or row == 0 else light_key
+            add_box(f'Key{row}_{col}', (0.019, 0.019, 0.012), kb + rot(local), mat,
+                    bevel=0.002, rotation=(0, 0, kb_rot))
+
+    # Stack of hardcover books with a plant, right.
+    stack = Vector((0.32, 0.42, 0.0))
+    pages = principled('Pages', '#F1E8D5', 0.8)
+    z = 0.0
+    for i, (w, d, tk, color, yaw) in enumerate([(0.26, 0.19, 0.042, '#7A4A35', 4),
+                                                 (0.24, 0.175, 0.036, '#4F6650', -5),
+                                                 (0.22, 0.165, 0.034, '#B49572', 8)]):
+        cz = z + tk / 2
+        add_box(f'Cover{i}', (w, d, tk), stack + Vector((0, 0, cz)), principled(f'Cover{i}', color, 0.6),
+                bevel=0.003, rotation=(0, 0, math.radians(yaw)))
+        add_box(f'Pages{i}', (w - 0.012, d + 0.002, tk - 0.008), stack + Vector((0.004, 0, cz)), pages,
+                rotation=(0, 0, math.radians(yaw)))
+        z += tk
+    root, meshes = import_asset(polyhaven_model('potted_plant_04', cache))
+    place(root, meshes, stack + Vector((0, 0, z)), 0, height=0.13)
+
+    # Mug on a woven coaster, front-right.
+    mug_at = Vector((0.18, 0.18, 0.0))
+    add_cylinder('Coaster', 0.055, 0.005, mug_at + Vector((0, 0, 0.0025)), principled('Coaster', '#C8A77A', 0.9))
+    ceramic = speckled_ceramic('Mug', '#E9DFD0')
+    mug = add_cylinder('Mug', 0.038, 0.085, mug_at + Vector((0, 0, 0.0475)), ceramic, bevel=0.003)
     bm = bmesh.new()
     bm.from_mesh(mug.data)
     bmesh.ops.delete(bm, geom=[f for f in bm.faces if f.normal.z > 0.9], context='FACES')
@@ -529,33 +659,42 @@ def build_desk(args):
     solid = mug.modifiers.new('Solidify', 'SOLIDIFY')
     solid.thickness = 0.004
     mug.modifiers.move(len(mug.modifiers) - 1, 0)
-    bpy.ops.mesh.primitive_torus_add(major_radius=0.022, minor_radius=0.0055, location=(0.17 + 0.042, 0.17, 0.048),
-                                     rotation=(math.radians(90), 0, 0))
-    handle = bpy.context.active_object
-    assign(handle, ceramic)
+    bpy.ops.mesh.primitive_torus_add(major_radius=0.022, minor_radius=0.0055,
+                                     location=mug_at + Vector((0.04, 0, 0.05)), rotation=(math.radians(90), 0, 0))
+    assign(bpy.context.active_object, ceramic)
     bpy.ops.object.shade_smooth()
-    add_cylinder('Coffee', 0.037, 0.002, (0.17, 0.17, 0.075), mat=principled('Coffee', '#2E1A10', 0.05))
+    add_cylinder('Coffee', 0.035, 0.002, mug_at + Vector((0, 0, 0.078)), principled('Coffee', '#3A2214', 0.05))
 
-    # Interior HDRI: rotate it so its window sits behind-left of the figure,
-    # then add a sun from the same direction for crisp, natural shadows.
-    image = set_world_hdri(polyhaven_hdri(DESK_HDRI, args.cache), 1.0, 0.0)
-    light_az, light_el = brightest_direction(image)
-    want_az = math.radians(165)  # window on the left, slightly behind (camera looks along +Y)
-    bpy.context.scene.world.node_tree.nodes['Mapping'].inputs['Rotation'].default_value[2] = light_az - want_az
-    sun_el = max(light_el, math.radians(28))
+
+def build_desk(args):
+    """Cozy desk by a window in warm morning sun through the blinds."""
+    h = args.height
+    bounds, figure = import_figure(args.model, h, args.yaw, 0.0)
+    x0, x1, z0, z1 = WINDOW
+    # Sun comes in through the left part of the window and lands on the figure.
+    through = (Vector((x0 + 0.3 * (x1 - x0), WALL_Y, 0.7)) - Vector((0, 0, h * 0.6))).normalized()
+    build_room(textured_material('DeskWood', polyhaven_texture(DESK_WOOD, args.cache), 0.6), through)
+    build_wall_shelf(args.cache)
+    build_desk_props(args.cache)
+
+    # Outside: autumn trees seen (blurred) through the window, plus a low golden sun.
+    set_world_hdri(polyhaven_hdri(DESK_OUTSIDE, args.cache), 1.2, math.radians(200))
     sun_data = bpy.data.lights.new('Sun', 'SUN')
-    sun_data.energy = 4.0
-    sun_data.color = (1.0, 0.86, 0.68)
-    sun_data.angle = math.radians(2.5)
+    sun_data.energy = 12.0
+    sun_data.color = (1.0, 0.72, 0.42)
+    sun_data.angle = math.radians(0.8)
     sun = bpy.data.objects.new('Sun', sun_data)
     bpy.context.collection.objects.link(sun)
-    to_light = Vector((math.cos(want_az) * math.cos(sun_el), math.sin(want_az) * math.cos(sun_el), math.sin(sun_el)))
-    sun.rotation_euler = to_light.to_track_quat('Z', 'Y').to_euler()
-    # Soft fill from the camera side, like light bouncing off a white wall.
-    add_area_light('WallBounce', (-0.2, -0.8, 0.3), (0, 0, h * 0.6), 0.8, 3, color=(1.0, 0.95, 0.9))
+    sun.rotation_euler = through.to_track_quat('Z', 'Y').to_euler()
+    # Window portal so the sky light entering the room converges quickly.
+    portal = add_area_light('WindowPortal', ((x0 + x1) / 2, WALL_Y - 0.06, (z0 + z1) / 2),
+                            ((x0 + x1) / 2, WALL_Y - 2, (z0 + z1) / 2), x1 - x0, 1, size_y=z1 - z0)
+    portal.data.cycles.is_portal = True
+    # Warm bounce from the room behind the camera.
+    add_area_light('RoomBounce', (0.4, -1.4, 0.6), (0, 0, h * 0.5), 1.5, 18, color=(1.0, 0.85, 0.7))
 
-    add_camera(bounds, figure, args, args.angle if args.angle is not None else -16, 13, lens=85,
-               fstop=args.fstop or 4.0, fill=0.62)
+    add_camera(bounds, figure, args, args.angle if args.angle is not None else 10, 7, lens=35,
+               fstop=args.fstop or 8, fill=0.7, aim=0.6)
 
 
 # --------------------------------------------------------------------------
