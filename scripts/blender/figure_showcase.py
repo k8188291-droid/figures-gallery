@@ -17,6 +17,11 @@ Scenes:
   fireplace
           Winter evening: candle and pine cones on a wooden table, stone
           fireplace glowing behind, sofa and a snowy window.
+  nordic  Minimal white desk in cool overcast daylight: mug, succulent in a
+          concrete pot, notebook; window and a picture ledge behind.
+  nightcity
+          Dark stone window sill at night: glass of water and a phone; a neon
+          city skyline as bokeh behind the glass.
 
 Focus is placed by ray casting onto the figure's face, so the figure is
 always sharp.
@@ -52,7 +57,7 @@ def parse_args():
     argv = sys.argv[sys.argv.index('--') + 1:] if '--' in sys.argv else []
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument('--model', required=True, help='GLB/GLTF file to showcase')
-    p.add_argument('--scene', choices=['studio', 'desk', 'cafe', 'records', 'fireplace'], default='studio')
+    p.add_argument('--scene', choices=['studio', 'desk', 'cafe', 'records', 'fireplace', 'nordic', 'nightcity'], default='studio')
     p.add_argument('--out', required=True, help='Output image path (.png/.jpg)')
     p.add_argument('--yaw', type=float, default=0.0,
                    help='Extra rotation (deg, around Z) so the figure faces the camera. '
@@ -1267,6 +1272,225 @@ def build_fireplace(args):
 
 
 # --------------------------------------------------------------------------
+# Shared: simple mugs, notebooks, glasses, picture frames
+# --------------------------------------------------------------------------
+
+def add_mug(name, at, mat, radius=0.04, height=0.09):
+    at = Vector(at)
+    mug = add_cylinder(name, radius, height, at + Vector((0, 0, height / 2)), mat, bevel=0.003)
+    bm = bmesh.new()
+    bm.from_mesh(mug.data)
+    bmesh.ops.delete(bm, geom=[f for f in bm.faces if f.normal.z > 0.9], context='FACES')
+    bm.to_mesh(mug.data)
+    bm.free()
+    solid = mug.modifiers.new('Solidify', 'SOLIDIFY')
+    solid.thickness = 0.004
+    mug.modifiers.move(len(mug.modifiers) - 1, 0)
+    bpy.ops.mesh.primitive_torus_add(major_radius=radius * 0.55, minor_radius=radius * 0.14,
+                                     location=at + Vector((-radius - radius * 0.35, 0, height * 0.55)),
+                                     rotation=(math.radians(90), 0, 0))
+    assign(bpy.context.active_object, mat)
+    bpy.ops.object.shade_smooth()
+    return mug
+
+
+def add_notebook(name, at, size, yaw_deg, cover_mat):
+    w, d, t = size
+    at = Vector(at)
+    add_box(f'{name}Cover', (w, d, t), at + Vector((0, 0, t / 2)), cover_mat, bevel=0.002,
+            rotation=(0, 0, math.radians(yaw_deg)))
+    add_box(f'{name}Pages', (w - 0.006, d + 0.001, t - 0.004), at + Vector((0.003, 0, t / 2)),
+            principled(f'{name}Pages', '#F3F1EC', 0.85), rotation=(0, 0, math.radians(yaw_deg)))
+
+
+def add_framed_picture(name, at, size, image, frame_mat, lean_deg=8, depth=0.02):
+    """Frame with a mat and a picture, leaning back against a wall (at = bottom centre)."""
+    w, h = size
+    at = Vector(at)
+    root = bpy.data.objects.new(name, None)
+    bpy.context.collection.objects.link(root)
+    parts = [
+        add_box(f'{name}FrameL', (0.018, depth, h), (-w / 2 + 0.009, 0, h / 2), frame_mat),
+        add_box(f'{name}FrameR', (0.018, depth, h), (w / 2 - 0.009, 0, h / 2), frame_mat),
+        add_box(f'{name}FrameT', (w, depth, 0.018), (0, 0, h - 0.009), frame_mat),
+        add_box(f'{name}FrameB', (w, depth, 0.018), (0, 0, 0.009), frame_mat),
+        add_box(f'{name}Mat', (w - 0.03, 0.004, h - 0.03), (0, 0.004, h / 2), principled(f'{name}Mat', '#F4F2EC', 0.9)),
+    ]
+    art = new_material(f'{name}Art')
+    nt = art.node_tree
+    tex = nt.nodes.new('ShaderNodeTexImage')
+    tex.image = bpy.data.images.load(image, check_existing=True)
+    nt.links.new(tex.outputs['Color'], nt.nodes['Principled BSDF'].inputs['Base Color'])
+    nt.nodes['Principled BSDF'].inputs['Roughness'].default_value = 0.85
+    bpy.ops.mesh.primitive_plane_add(size=1, location=(0, 0.001, h / 2), rotation=(math.radians(90), 0, 0))
+    plane = bpy.context.active_object
+    plane.scale = (w * 0.55, h * 0.62, 1)
+    assign(plane, art)
+    parts.append(plane)
+    for p in parts:
+        p.parent = root
+    root.location = at
+    root.rotation_euler = (math.radians(-lean_deg), 0, 0)
+    return root
+
+
+def clear_glass(name='ClearGlass'):
+    return principled(name, '#FFFFFF', 0.02, **{'Transmission Weight': 1.0, 'IOR': 1.5})
+
+
+def add_window_view(name, image, centre, size, strength):
+    """Generated photo on an emissive plane, used as the view through a window."""
+    bpy.ops.mesh.primitive_plane_add(size=1, location=centre, rotation=(math.radians(90), 0, 0))
+    plane = bpy.context.active_object
+    plane.name = name
+    plane.scale = (size[0], size[1], 1)
+    plane.visible_shadow = False
+    assign(plane, image_emission_material(name, image, strength))
+    return plane
+
+
+# --------------------------------------------------------------------------
+# Scene: nordic
+# --------------------------------------------------------------------------
+
+def build_nordic(args):
+    """Minimal Scandinavian white desk in cool, neutral daylight."""
+    h = args.height
+    cache = args.cache
+    bounds, figure = import_figure(args.model, h, args.yaw, 0.0)
+    floor_z, wall_y = -0.75, 0.9
+    add_box('Desk', (1.8, 1.0, 0.03), (0, 0.4, -0.015), principled('WhiteDesk', '#F1F0EC', 0.45, **{'Coat Weight': 0.15}),
+            bevel=0.003)
+    white_wall = principled('WhiteWall', '#E9E9E6', 0.9)
+    # Back wall with a window on the left.
+    wx0, wx1, wz0, wz1 = -1.15, -0.32, 0.06, 1.1
+    add_box('WallL', (wx0 + 2.5, 0.06, 3.0), ((wx0 - 2.5) / 2, wall_y + 0.03, 0.75), white_wall)
+    add_box('WallR', (2.5 - wx1, 0.06, 3.0), ((wx1 + 2.5) / 2, wall_y + 0.03, 0.75), white_wall)
+    add_box('WallB', (wx1 - wx0, 0.06, wz0 - floor_z), ((wx0 + wx1) / 2, wall_y + 0.03, (wz0 + floor_z) / 2), white_wall)
+    add_box('WallT', (wx1 - wx0, 0.06, 2.25 - wz1), ((wx0 + wx1) / 2, wall_y + 0.03, (wz1 + 2.25) / 2), white_wall)
+    frame = principled('WindowFrame', '#F6F6F4', 0.4)
+    for nm, size, loc in (('WinL', (0.05, 0.08, wz1 - wz0), (wx0 + 0.025, wall_y + 0.03, (wz0 + wz1) / 2)),
+                          ('WinR', (0.05, 0.08, wz1 - wz0), (wx1 - 0.025, wall_y + 0.03, (wz0 + wz1) / 2)),
+                          ('WinM', (0.035, 0.06, wz1 - wz0), ((wx0 + wx1) / 2, wall_y + 0.03, (wz0 + wz1) / 2)),
+                          ('WinSill', (wx1 - wx0 + 0.06, 0.12, 0.03), ((wx0 + wx1) / 2, wall_y - 0.01, wz0))):
+        add_box(nm, size, loc, frame)
+    add_window_view('OvercastView', os.path.join(TEXTURES, 'overcast_window_view.jpg'),
+                    ((wx0 + wx1) / 2, wall_y + 0.9, 0.6), (2.4, 1.6), 1.0)
+    add_box('Floor', (5.0, 5.0, 0.04), (0, 0.5, floor_z), principled('LightFloor', '#CDBBA3', 0.6))
+
+    # Picture ledge on the wall: framed line drawing and a few books.
+    oak = textured_material('LedgeOak', polyhaven_texture('oak_veneer_01', cache), 0.5)
+    ledge_z = 0.1
+    add_box('Ledge', (0.75, 0.09, 0.022), (0.42, wall_y - 0.045, ledge_z), oak, bevel=0.002)
+    add_box('LedgeLip', (0.75, 0.012, 0.02), (0.42, wall_y - 0.085, ledge_z + 0.02), oak)
+    add_framed_picture('LineArt', (0.3, wall_y - 0.05, ledge_z + 0.011), (0.26, 0.36),
+                       os.path.join(TEXTURES, 'line_drawing.jpg'), principled('ArtFrame', '#C9A27C', 0.5))
+    for i, (x, color, hgt, lean) in enumerate(((0.58, '#9EA3A6', 0.22, 0), (0.605, '#E3E1DC', 0.2, 0), (0.64, '#5E6266', 0.21, -12))):
+        add_box(f'LedgeBook{i}', (0.022, 0.15, hgt), (x, wall_y - 0.08, ledge_z + 0.011 + hgt / 2),
+                principled(f'LedgeBook{i}', color, 0.7), bevel=0.002, rotation=(0, math.radians(lean), 0))
+
+    # Props: white mug (left), succulent in a concrete pot (right, back), grey notebook (right, front).
+    add_mug('WhiteMug', (-0.2, 0.2, 0.0), principled('WhiteCeramic', '#F7F7F5', 0.15, **{'Coat Weight': 0.8}))
+    root, meshes = import_asset(polyhaven_model('potted_plant_04', cache))
+    place(root, meshes, (0.19, 0.2, 0.0), 30, height=0.13)
+    concrete = principled('Concrete', '#A9A8A4', 0.85)
+    noise = concrete.node_tree.nodes.new('ShaderNodeTexNoise')
+    noise.inputs['Scale'].default_value = 60
+    bump = concrete.node_tree.nodes.new('ShaderNodeBump')
+    bump.inputs['Strength'].default_value = 0.15
+    concrete.node_tree.links.new(noise.outputs['Fac'], bump.inputs['Height'])
+    concrete.node_tree.links.new(bump.outputs['Normal'], concrete.node_tree.nodes['Principled BSDF'].inputs['Normal'])
+    for m in meshes:
+        for slot in m.material_slots:
+            if 'pot' in slot.material.name.lower():
+                slot.material = concrete
+    add_notebook('Notebook', (0.18, -0.01, 0.0), (0.21, 0.15, 0.016), -12, principled('NotebookCover', '#6E7378', 0.8))
+
+    # Soft overcast daylight through the window plus neutral bounce from the room.
+    add_area_light('WindowLight', ((wx0 + wx1) / 2, wall_y - 0.05, 0.55), (0, 0, h * 0.6), 0.9, 45,
+                   color=(0.93, 0.96, 1.0), size_y=1.0)
+    add_area_light('RoomBounce', (0.6, -1.0, 0.5), (0, 0, h * 0.5), 1.5, 18, color=(1.0, 1.0, 1.0))
+    set_world_color((0.85, 0.87, 0.9), 0.5)
+
+    add_camera(bounds, figure, args, args.angle if args.angle is not None else 10, 7, lens=35,
+               fstop=args.fstop or 8, fill=0.8, aim=0.5)
+
+
+# --------------------------------------------------------------------------
+# Scene: nightcity
+# --------------------------------------------------------------------------
+
+def add_phone(name, at, yaw_deg):
+    """Phone lying face down: rounded slab with a camera bump."""
+    at = Vector(at)
+    body = principled(f'{name}Body', '#2B2D31', 0.25, Metallic=0.9)
+    back = principled(f'{name}Back', '#3A3D44', 0.35, **{'Coat Weight': 1.0, 'Coat Roughness': 0.05})
+    root = bpy.data.objects.new(name, None)
+    bpy.context.collection.objects.link(root)
+    parts = [add_box(f'{name}Frame', (0.072, 0.147, 0.0078), (0, 0, 0.0039), body, bevel=0.0035),
+             add_box(f'{name}Back', (0.068, 0.143, 0.0006), (0, 0, 0.0081), back, bevel=0.0003)]
+    lens = principled(f'{name}Lens', '#050507', 0.05, **{'Coat Weight': 1.0})
+    parts.append(add_box(f'{name}Bump', (0.03, 0.03, 0.0015), (-0.014, 0.05, 0.0089), back, bevel=0.003))
+    for i, (x, y) in enumerate(((-0.021, 0.057), (-0.007, 0.057), (-0.021, 0.043))):
+        parts.append(add_cylinder(f'{name}Lens{i}', 0.0055, 0.002, (x, y, 0.0098), lens, vertices=32))
+    for p in parts:
+        p.parent = root
+    root.location = at
+    root.rotation_euler = (0, 0, math.radians(yaw_deg))
+
+
+def build_nightcity(args):
+    """Night window sill high above a neon city: cool, dim interior light, colourful bokeh."""
+    h = args.height
+    cache = args.cache
+    bounds, figure = import_figure(args.model, h, args.yaw, 0.0)
+    granite = principled('BlackStone', '#121316', 0.12, **{'Coat Weight': 0.6, 'Coat Roughness': 0.03})
+    speck = granite.node_tree.nodes.new('ShaderNodeTexNoise')
+    speck.inputs['Scale'].default_value = 300
+    ramp = granite.node_tree.nodes.new('ShaderNodeValToRGB')
+    ramp.color_ramp.elements[0].position = 0.62
+    ramp.color_ramp.elements[0].color = hex_rgba('#101114')
+    ramp.color_ramp.elements[1].position = 0.66
+    ramp.color_ramp.elements[1].color = hex_rgba('#3A3C42')
+    granite.node_tree.links.new(speck.outputs['Fac'], ramp.inputs['Fac'])
+    granite.node_tree.links.new(ramp.outputs['Color'], granite.node_tree.nodes['Principled BSDF'].inputs['Base Color'])
+    add_box('Sill', (2.0, 0.5, 0.04), (0, 0.0, -0.02), granite, bevel=0.003)
+
+    # Window: dark frame, a glass pane right behind the sill, the city far outside.
+    glass_y = 0.26
+    dark = principled('DarkFrame', '#16171A', 0.35, Metallic=0.6)
+    add_box('FrameBottom', (2.0, 0.06, 0.03), (0, glass_y, 0.015), dark)
+    add_box('FrameLeft', (0.06, 0.08, 1.6), (-0.42, glass_y, 0.8), dark)
+    add_box('WallLeft', (1.2, 0.3, 2.0), (-1.05, glass_y, 0.8), principled('NightWall', '#2A2B30', 0.9))
+    add_box('FrameMid', (0.04, 0.06, 1.6), (0.55, glass_y, 0.8), dark)
+    pane = principled('Pane', '#FFFFFF', 0.0, **{'Transmission Weight': 1.0, 'IOR': 1.5})
+    add_box('Pane', (2.0, 0.006, 1.6), (0, glass_y, 0.83), pane)
+    add_window_view('CityView', os.path.join(TEXTURES, 'night_city_view.jpg'), (0.25, 4.0, 0.55), (5.4, 3.6), 1.6)
+
+    # Props: glass of water (left) and a phone lying face down (right).
+    glass_at = Vector((-0.16, 0.08, 0.0))
+    root, meshes = import_asset(simready_asset('dishware_glass_8oz_a01', cache))
+    g_lo, g_hi = place(root, meshes, glass_at, 0, height=0.1)
+    for m in meshes:
+        for slot in m.material_slots:
+            slot.material = clear_glass()
+    water = principled('Water', '#FFFFFF', 0.0, **{'Transmission Weight': 1.0, 'IOR': 1.33})
+    add_cylinder('Water', (g_hi.x - g_lo.x) / 2 - 0.004, 0.06, glass_at + Vector((0, 0, 0.007 + 0.03)), water)
+    add_phone('Phone', (0.16, 0.1, 0.0), 22)
+
+    # Dim cool interior light from the room, coloured city glow from the window
+    # (the glow lights sit just inside the glass: Cycles does not pass direct light through refractive glass).
+    add_area_light('RoomCool', (0.6, -0.9, 0.45), (0, 0, h * 0.6), 1.0, 12, color=(0.72, 0.82, 1.0))
+    neon = [add_area_light('NeonMagenta', (-0.45, 0.2, 0.25), (0, 0, h * 0.6), 0.8, 14, color=(1.0, 0.3, 0.8)),
+            add_area_light('NeonTeal', (0.55, 0.2, 0.2), (0, 0, h * 0.5), 0.8, 14, color=(0.2, 0.9, 1.0))]
+    link_lights(neon, figure)  # rim light on the figure only, not on the walls
+    set_world_color((0.02, 0.025, 0.04), 1.0)
+
+    add_camera(bounds, figure, args, args.angle if args.angle is not None else 10, 7, lens=35,
+               fstop=args.fstop or 8, fill=0.8, aim=0.5)
+
+
+# --------------------------------------------------------------------------
 # Render setup
 # --------------------------------------------------------------------------
 
@@ -1297,7 +1521,8 @@ def main():
     args = parse_args()
     bpy.ops.wm.read_factory_settings(use_empty=True)
     {'studio': build_studio, 'desk': build_desk, 'cafe': build_cafe,
-     'records': build_records, 'fireplace': build_fireplace}[args.scene](args)
+     'records': build_records, 'fireplace': build_fireplace,
+     'nordic': build_nordic, 'nightcity': build_nightcity}[args.scene](args)
     configure_render(args)
     cam = bpy.context.scene.camera
     print(f'[showcase] focus distance {cam.data.dof.focus_distance:.3f} m, f/{cam.data.dof.aperture_fstop}')
