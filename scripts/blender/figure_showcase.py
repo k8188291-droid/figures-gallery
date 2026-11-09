@@ -599,7 +599,7 @@ def build_wall_shelf(cache):
 def build_desk_props(cache):
     # Keyboard, front-left.
     kb_rot = math.radians(10)
-    kb = Vector((-0.3, 0.08, 0.0))
+    kb = Vector((-0.4, 0.08, 0.0))
     rot = lambda v: Vector((v.x * math.cos(kb_rot) - v.y * math.sin(kb_rot),
                              v.x * math.sin(kb_rot) + v.y * math.cos(kb_rot), v.z))
     add_box('Keyboard', (0.36, 0.125, 0.02), kb + Vector((0, 0, 0.01)),
