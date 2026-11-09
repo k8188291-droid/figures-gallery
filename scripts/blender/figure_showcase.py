@@ -67,6 +67,11 @@ def parse_args():
     p.add_argument('--samples', type=int, default=256)
     p.add_argument('--fstop', type=float, default=None, help='Override aperture f-stop (smaller = more blur)')
     p.add_argument('--angle', type=float, default=None, help='Override camera azimuth (deg, 0 = straight front)')
+    p.add_argument('--fill', type=float, default=0.0,
+                   help='Soft fill light (W) from the camera-left, lighting only the figure; '
+                        'brightens the side of the face on the left of the image')
+    p.add_argument('--exposure', type=float, default=0.0,
+                   help='Extra exposure in stops on top of the scene default (e.g. 0.3 for a darker figure)')
     p.add_argument('--focus-height', type=float, default=0.72,
                    help='Focus point as a fraction of figure height (0.72 = face for most figures)')
     p.add_argument('--cache', default=os.path.join(REPO_ROOT, '.cache'),
@@ -372,6 +377,8 @@ def add_camera(bounds, figure_meshes, args, azimuth_deg, elevation_deg, lens, fs
     look_at(cam, target)
     bpy.context.scene.camera = cam
     bpy.context.view_layer.update()
+    cam['face_point'] = (0.0, 0.0, lo.z + height * args.focus_height)
+    cam['figure_meshes'] = [m.name for m in figure_meshes]
 
     cam_data.dof.use_dof = True
     cam_data.dof.focus_distance = focus_distance(cam, figure_meshes, bounds, args.focus_height)
@@ -647,22 +654,26 @@ def build_wall_shelf(cache):
     place(root, meshes, (0.65, WALL_Y - 0.1, 0.11), 30, height=0.16)
 
 
-def build_desk_props(cache):
-    # Keyboard, front-left.
-    kb_rot = math.radians(10)
-    kb = Vector((-0.4, 0.08, 0.0))
-    rot = lambda v: Vector((v.x * math.cos(kb_rot) - v.y * math.sin(kb_rot),
-                             v.x * math.sin(kb_rot) + v.y * math.cos(kb_rot), v.z))
-    add_box('Keyboard', (0.36, 0.125, 0.02), kb + Vector((0, 0, 0.01)),
-            principled('KbCase', '#55585C', 0.45), bevel=0.004, rotation=(0, 0, kb_rot))
-    light_key = principled('KeyLight', '#EEEAE2', 0.4)
-    dark_key = principled('KeyDark', '#A9ABAD', 0.4)
+def add_keyboard(at, yaw_deg, case_mat, key_mat, mod_mat):
+    """Compact 75% mechanical keyboard: a case with 5 rows of keycaps."""
+    rot_z = math.radians(yaw_deg)
+    at = Vector(at)
+    rot = lambda v: Vector((v.x * math.cos(rot_z) - v.y * math.sin(rot_z),
+                             v.x * math.sin(rot_z) + v.y * math.cos(rot_z), v.z))
+    add_box('Keyboard', (0.36, 0.125, 0.02), at + Vector((0, 0, 0.01)), case_mat, bevel=0.004,
+            rotation=(0, 0, rot_z))
     for row in range(5):
         for col in range(15):
             local = Vector((-0.164 + col * 0.0234, -0.046 + row * 0.0234, 0.027))
-            mat = dark_key if col in (0, 14) or row == 0 else light_key
-            add_box(f'Key{row}_{col}', (0.019, 0.019, 0.012), kb + rot(local), mat,
-                    bevel=0.002, rotation=(0, 0, kb_rot))
+            mat = mod_mat if col in (0, 14) or row == 0 else key_mat
+            add_box(f'Key{row}_{col}', (0.019, 0.019, 0.012), at + rot(local), mat,
+                    bevel=0.002, rotation=(0, 0, rot_z))
+
+
+def build_desk_props(cache):
+    # Keyboard, front-left.
+    add_keyboard((-0.4, 0.08, 0.0), 10, principled('KbCase', '#55585C', 0.45),
+                 principled('KeyLight', '#EEEAE2', 0.4), principled('KeyDark', '#A9ABAD', 0.4))
 
     # Stack of hardcover books with a plant, right.
     stack = Vector((0.32, 0.42, 0.0))
@@ -1355,6 +1366,28 @@ def add_window_view(name, image, centre, size, strength):
 # Scene: nordic
 # --------------------------------------------------------------------------
 
+def add_open_notebook(at, yaw_deg):
+    """Open notebook lying flat, with a pen across the right page."""
+    at = Vector(at)
+    root = bpy.data.objects.new('OpenNotebook', None)
+    bpy.context.collection.objects.link(root)
+    cover = principled('OpenNbCover', '#6E7378', 0.8)
+    paper = principled('OpenNbPaper', '#F5F4F0', 0.9)
+    parts = [add_box('NbCoverL', (0.15, 0.21, 0.003), (-0.076, 0, 0.0015), cover),
+             add_box('NbCoverR', (0.15, 0.21, 0.003), (0.076, 0, 0.0015), cover),
+             add_box('NbPagesL', (0.142, 0.2, 0.006), (-0.073, 0, 0.006), paper, rotation=(0, math.radians(2), 0)),
+             add_box('NbPagesR', (0.142, 0.2, 0.006), (0.073, 0, 0.006), paper, rotation=(0, math.radians(-2), 0))]
+    bpy.ops.mesh.primitive_cylinder_add(radius=0.0045, depth=0.14, location=(0.07, -0.01, 0.0135),
+                                        rotation=(math.radians(90), 0, math.radians(25)))
+    pen = bpy.context.active_object
+    assign(pen, principled('Pen', '#1E1F22', 0.3))
+    parts.append(pen)
+    for p in parts:
+        p.parent = root
+    root.location = at
+    root.rotation_euler = (0, 0, math.radians(yaw_deg))
+
+
 def build_nordic(args):
     """Minimal Scandinavian white desk in cool, neutral daylight."""
     h = args.height
@@ -1377,21 +1410,22 @@ def build_nordic(args):
                           ('WinSill', (wx1 - wx0 + 0.06, 0.12, 0.03), ((wx0 + wx1) / 2, wall_y - 0.01, wz0))):
         add_box(nm, size, loc, frame)
     add_window_view('OvercastView', os.path.join(TEXTURES, 'overcast_window_view.jpg'),
-                    ((wx0 + wx1) / 2, wall_y + 0.9, 0.6), (2.4, 1.6), 2.6)
+                    ((wx0 + wx1) / 2, wall_y + 0.9, 0.6), (2.4, 1.6), 1.8)
     add_box('Floor', (5.0, 5.0, 0.04), (0, 0.5, floor_z), principled('LightFloor', '#CDBBA3', 0.6))
 
-    # A framed line drawing standing on the desk, leaning on the wall, with a few books beside it.
-    add_framed_picture('LineArt', (0.16, wall_y - 0.06, 0.0), (0.3, 0.4),
+    # A framed line drawing standing on the desk, leaning on the wall.
+    add_framed_picture('LineArt', (0.05, wall_y - 0.06, 0.0), (0.3, 0.4),
                        os.path.join(TEXTURES, 'line_drawing_bold.jpg'), principled('ArtFrame', '#C9A27C', 0.5), lean_deg=10)
-    for i, (x, color, hgt, lean) in enumerate(((0.36, '#9EA3A6', 0.24, 0), (0.388, '#E3E1DC', 0.22, 0),
-                                               (0.418, '#5E6266', 0.23, 0), (0.46, '#B9BDC0', 0.2, -14))):
-        add_box(f'DeskBook{i}', (0.026, 0.17, hgt), (x, wall_y - 0.1, hgt / 2),
-                principled(f'DeskBook{i}', color, 0.7), bevel=0.002, rotation=(0, math.radians(lean), 0))
 
-    # Props: white mug (left), succulent in a concrete pot (right, back), grey notebook (right, front).
-    add_mug('WhiteMug', (-0.2, 0.2, 0.0), principled('WhiteCeramic', '#F7F7F5', 0.15, **{'Coat Weight': 0.8}))
+    # Desk set-up: white keyboard on the left, open notebook with a pen and a mug
+    # on the right, a white lamp and a succulent at the back right.
+    add_keyboard((-0.24, 0.3, 0.0), 8, principled('WhiteKbCase', '#E6E6E3', 0.4),
+                 principled('WhiteKey', '#F4F4F2', 0.45), principled('GreyKey', '#B9BCBF', 0.45))
+    add_mug('WhiteMug', (0.25, 0.34, 0.0), principled('WhiteCeramic', '#F7F7F5', 0.15, **{'Coat Weight': 0.8}))
+    add_open_notebook((0.19, 0.16, 0.0), -24)
+    add_simready('lamp_table_bedside_a01', cache, (0.3, 0.62, 0.0), 200, 0.9)
     root, meshes = import_asset(polyhaven_model('potted_plant_04', cache))
-    place(root, meshes, (0.19, 0.2, 0.0), 30, height=0.13)
+    place(root, meshes, (0.14, 0.56, 0.0), 30, height=0.13)
     concrete = principled('Concrete', '#A9A8A4', 0.85)
     noise = concrete.node_tree.nodes.new('ShaderNodeTexNoise')
     noise.inputs['Scale'].default_value = 60
@@ -1402,14 +1436,14 @@ def build_nordic(args):
     for m in meshes:  # pot, soil and plant share one material: only re-skin the pot
         if m.name.split('.')[0].endswith('_pot'):
             m.material_slots[0].material = concrete
-    add_notebook('Notebook', (0.18, -0.01, 0.0), (0.21, 0.15, 0.016), -12, principled('NotebookCover', '#6E7378', 0.8))
 
     # The window is the key light (soft, cool overcast daylight from behind-left),
     # with only a weak neutral bounce from the room so the light matches the view.
-    add_area_light('WindowLight', ((wx0 + wx1) / 2, wall_y - 0.05, 0.55), (0, 0, h * 0.6), 0.9, 75,
+    add_area_light('WindowLight', ((wx0 + wx1) / 2, wall_y - 0.05, 0.55), (0, 0, h * 0.6), 0.9, 50,
                    color=(0.9, 0.95, 1.0), size_y=1.0)
-    add_area_light('RoomBounce', (0.6, -1.0, 0.5), (0, 0, h * 0.5), 1.5, 8, color=(0.97, 0.98, 1.0))
-    set_world_color((0.8, 0.84, 0.9), 0.35)
+    add_area_light('RoomBounce', (0.6, -1.0, 0.5), (0, 0, h * 0.5), 1.5, 6, color=(0.97, 0.98, 1.0))
+    set_world_color((0.8, 0.84, 0.9), 0.25)
+    bpy.context.scene.view_settings.exposure = -0.3
 
     add_camera(bounds, figure, args, args.angle if args.angle is not None else 10, 7, lens=35,
                fstop=args.fstop or 8, fill=0.8, aim=0.5)
@@ -1516,6 +1550,18 @@ def configure_render(args):
         scene.render.image_settings.file_format = 'PNG'
 
 
+def add_figure_fill(power):
+    """Soft area light from the camera-left at face height, linked to the figure only."""
+    scene = bpy.context.scene
+    cam = scene.camera
+    face = Vector(cam['face_point'])
+    to_cam = (cam.location - face).normalized()
+    left = Vector((-to_cam.y, to_cam.x, 0)).normalized() * -1  # camera's left side, seen from the figure
+    pos = face + (to_cam * 0.6 + left * 0.45 + Vector((0, 0, 0.12))).normalized() * 0.5
+    light = add_area_light('FigureFill', pos, face, 0.35, power, color=(1.0, 0.97, 0.95))
+    link_lights([light], [bpy.data.objects[n] for n in cam['figure_meshes']])
+
+
 def main():
     args = parse_args()
     bpy.ops.wm.read_factory_settings(use_empty=True)
@@ -1523,6 +1569,9 @@ def main():
      'records': build_records, 'fireplace': build_fireplace,
      'nordic': build_nordic, 'nightcity': build_nightcity}[args.scene](args)
     configure_render(args)
+    bpy.context.scene.view_settings.exposure += args.exposure
+    if args.fill > 0:
+        add_figure_fill(args.fill)
     cam = bpy.context.scene.camera
     print(f'[showcase] focus distance {cam.data.dof.focus_distance:.3f} m, f/{cam.data.dof.aperture_fstop}')
     if args.save_blend:
