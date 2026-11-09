@@ -10,12 +10,15 @@ Scenes:
   desk    Cozy desk by a window: a modelled room with real blinds, so the
           morning sun falls on the desk and the figure in stripes; keyboard,
           stacked books with a plant, mug, wall shelf and lamp; light haze.
+  cafe    Wooden café counter: croissant and latte beside the figure, espresso
+          machine, grinder, jars, mugs and pendant lamps softly blurred behind.
 
 Focus is placed by ray casting onto the figure's face, so the figure is
 always sharp.
 
-The desk scene downloads CC0 assets from Poly Haven (polyhaven.com) on first
-run and caches them in .cache/polyhaven.
+The desk and cafe scenes download assets on first run and cache them in
+.cache/: Poly Haven (polyhaven.com, CC0) and NVIDIA SimReady
+(huggingface.co/datasets/nvidia/simready-assets, CC-BY 4.0).
 """
 
 import argparse
@@ -24,6 +27,7 @@ import math
 import os
 import statistics
 import sys
+import urllib.parse
 import urllib.request
 
 import bmesh
@@ -42,7 +46,7 @@ def parse_args():
     argv = sys.argv[sys.argv.index('--') + 1:] if '--' in sys.argv else []
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument('--model', required=True, help='GLB/GLTF file to showcase')
-    p.add_argument('--scene', choices=['studio', 'desk'], default='studio')
+    p.add_argument('--scene', choices=['studio', 'desk', 'cafe'], default='studio')
     p.add_argument('--out', required=True, help='Output image path (.png/.jpg)')
     p.add_argument('--yaw', type=float, default=0.0,
                    help='Extra rotation (deg, around Z) so the figure faces the camera. '
@@ -54,14 +58,14 @@ def parse_args():
     p.add_argument('--angle', type=float, default=None, help='Override camera azimuth (deg, 0 = straight front)')
     p.add_argument('--focus-height', type=float, default=0.72,
                    help='Focus point as a fraction of figure height (0.72 = face for most figures)')
-    p.add_argument('--cache', default=os.path.join(REPO_ROOT, '.cache', 'polyhaven'),
-                   help='Download cache for Poly Haven assets')
+    p.add_argument('--cache', default=os.path.join(REPO_ROOT, '.cache'),
+                   help='Download cache for Poly Haven / NVIDIA SimReady assets')
     p.add_argument('--save-blend', default=None, help='Also save the assembled scene to this .blend file')
     return p.parse_args(argv)
 
 
 # --------------------------------------------------------------------------
-# Poly Haven assets (CC0)
+# Downloaded assets: Poly Haven (CC0) and NVIDIA SimReady (CC-BY 4.0)
 # --------------------------------------------------------------------------
 
 USER_AGENT = 'figures-gallery-blender-showcase/1.0'
@@ -81,7 +85,7 @@ def _download(url, dest):
 
 
 def _files(asset_id, cache):
-    path = os.path.join(cache, asset_id, 'files.json')
+    path = os.path.join(cache, 'polyhaven', asset_id, 'files.json')
     _download(f'https://api.polyhaven.com/files/{asset_id}', path)
     with open(path) as f:
         return json.load(f)
@@ -90,7 +94,7 @@ def _files(asset_id, cache):
 def polyhaven_model(asset_id, cache, res='1k'):
     files = _files(asset_id, cache)
     entry = files['gltf'][res]['gltf'] if 'gltf' in files else files['blend'][res]['blend']
-    folder = os.path.join(cache, asset_id, res)
+    folder = os.path.join(cache, 'polyhaven', asset_id, res)
     for rel, info in entry.get('include', {}).items():
         _download(info['url'], os.path.join(folder, rel))
     return _download(entry['url'], os.path.join(folder, os.path.basename(entry['url'])))
@@ -98,7 +102,7 @@ def polyhaven_model(asset_id, cache, res='1k'):
 
 def polyhaven_hdri(asset_id, cache, res='2k'):
     url = _files(asset_id, cache)['hdri'][res]['hdr']['url']
-    return _download(url, os.path.join(cache, asset_id, os.path.basename(url)))
+    return _download(url, os.path.join(cache, 'polyhaven', asset_id, os.path.basename(url)))
 
 
 def polyhaven_texture(asset_id, cache, res='2k'):
@@ -106,8 +110,32 @@ def polyhaven_texture(asset_id, cache, res='2k'):
     maps = {}
     for key, name in (('Diffuse', 'diff'), ('Rough', 'rough'), ('nor_gl', 'nor')):
         url = files[key][res]['jpg']['url']
-        maps[name] = _download(url, os.path.join(cache, asset_id, os.path.basename(url)))
+        maps[name] = _download(url, os.path.join(cache, 'polyhaven', asset_id, os.path.basename(url)))
     return maps
+
+
+SIMREADY = 'https://huggingface.co/datasets/nvidia/simready-assets'
+
+
+def simready_asset(name, cache):
+    """Download one NVIDIA SimReady asset (OpenUSD) and return its root .usd file."""
+    folder = os.path.join(cache, 'simready', name)
+    listing = _download(f'https://huggingface.co/api/datasets/nvidia/simready-assets/tree/main/{name}?recursive=true',
+                        os.path.join(folder, 'tree.json'))
+    with open(listing) as f:
+        entries = json.load(f)
+    root = None
+    for entry in entries:
+        path = entry['path']
+        if entry['type'] != 'file' or '/simready_usd/' not in path:
+            continue
+        if '/.thumbs/' in path or '/source_assets/' in path:
+            continue
+        rel = path.split('/simready_usd/', 1)[1]
+        local = _download(f'{SIMREADY}/resolve/main/{urllib.parse.quote(path)}', os.path.join(folder, rel))
+        if '/' not in rel and rel.endswith('.usd'):
+            root = local
+    return root
 
 
 # --------------------------------------------------------------------------
@@ -223,6 +251,8 @@ def import_asset(path):
         for obj in dst.objects:
             if obj and obj.type in {'MESH', 'EMPTY'}:
                 bpy.context.collection.objects.link(obj)
+    elif path.endswith(('.usd', '.usda', '.usdc')):
+        bpy.ops.wm.usd_import(filepath=path, import_guide=False, import_proxy=False, support_scene_instancing=False)
     else:
         bpy.ops.import_scene.gltf(filepath=path)
     imported = [o for o in bpy.data.objects if o not in before and o.users_collection]
@@ -681,6 +711,146 @@ def build_desk(args):
 
 
 # --------------------------------------------------------------------------
+# Scene: cafe
+# --------------------------------------------------------------------------
+
+CAFE_WOOD = 'wood_table_001'
+
+
+def stainless(name='Stainless'):
+    return principled(name, '#A8AAAC', 0.3, Metallic=1.0)
+
+
+def add_espresso_machine(at):
+    """Simplified two-group espresso machine (reads as one once blurred)."""
+    at = Vector(at)
+    steel = stainless()
+    black = principled('BlackPlastic', '#161616', 0.4)
+    add_box('EspressoBody', (0.66, 0.46, 0.36), at + Vector((0, 0, 0.18)), steel, bevel=0.01)
+    add_box('EspressoPanel', (0.6, 0.01, 0.12), at + Vector((0, -0.232, 0.29)), principled('Panel', '#2B2B2B', 0.3))
+    add_box('CupTray', (0.66, 0.46, 0.015), at + Vector((0, 0, 0.37)), steel, bevel=0.003)
+    add_box('DripTray', (0.58, 0.14, 0.03), at + Vector((0, -0.29, 0.015)), steel, bevel=0.003)
+    for i, x in enumerate((-0.17, 0.17)):
+        add_cylinder(f'GroupHead{i}', 0.045, 0.06, at + Vector((x, -0.27, 0.17)), steel, bevel=0.004)
+        add_cylinder(f'Portafilter{i}', 0.038, 0.03, at + Vector((x, -0.27, 0.125)), steel, bevel=0.003)
+        add_box(f'PortafilterHandle{i}', (0.025, 0.13, 0.025), at + Vector((x, -0.36, 0.12)), black, bevel=0.006,
+                rotation=(math.radians(-8), 0, 0))
+        add_cylinder(f'Gauge{i}', 0.016, 0.01, at + Vector((x * 0.5, -0.24, 0.3)),
+                     principled(f'Gauge{i}', '#D8D2C6', 0.2), vertices=48).rotation_euler = (math.radians(90), 0, 0)
+    bpy.ops.mesh.primitive_cylinder_add(radius=0.006, depth=0.22, location=at + Vector((0.31, -0.28, 0.13)),
+                                        rotation=(math.radians(15), 0, 0))
+    assign(bpy.context.active_object, steel)
+
+
+def add_grinder(at):
+    at = Vector(at)
+    black = principled('GrinderBody', '#1E1E1E', 0.35)
+    add_box('GrinderBody', (0.14, 0.2, 0.26), at + Vector((0, 0, 0.13)), black, bevel=0.01)
+    bpy.ops.mesh.primitive_cone_add(radius1=0.04, radius2=0.075, depth=0.16, location=at + Vector((0, 0.01, 0.34)),
+                                    vertices=48)
+    hopper = bpy.context.active_object
+    assign(hopper, principled('Hopper', '#D8D2C8', 0.05, **{'Transmission Weight': 1.0}))
+    bpy.ops.object.shade_smooth()
+    add_cylinder('Beans', 0.05, 0.07, at + Vector((0, 0.01, 0.3)), principled('Beans', '#3B2416', 0.6))
+
+
+def add_pendant(name, at, cord=0.6):
+    at = Vector(at)
+    copper = principled(f'{name}Shade', '#B36A3E', 0.3, Metallic=1.0)
+    bpy.ops.mesh.primitive_cone_add(radius1=0.11, radius2=0.025, depth=0.12, location=at + Vector((0, 0, 0.06)),
+                                    vertices=64, end_fill_type='NOTHING')
+    shade = bpy.context.active_object
+    shade.name = name
+    solid = shade.modifiers.new('Solidify', 'SOLIDIFY')
+    solid.thickness = 0.003
+    assign(shade, copper)
+    bpy.ops.object.shade_smooth()
+    add_cylinder(f'{name}Cord', 0.003, cord, at + Vector((0, 0, 0.12 + cord / 2)), principled('Cord', '#111111', 0.5))
+    glow = new_material(f'{name}Bulb')
+    nt = glow.node_tree
+    nt.nodes.remove(nt.nodes['Principled BSDF'])
+    em = nt.nodes.new('ShaderNodeEmission')
+    em.inputs['Color'].default_value = hex_rgba('#FFC27A')
+    em.inputs['Strength'].default_value = 25
+    nt.links.new(em.outputs[0], nt.nodes['Material Output'].inputs['Surface'])
+    bpy.ops.mesh.primitive_uv_sphere_add(radius=0.03, location=at + Vector((0, 0, 0.02)))
+    assign(bpy.context.active_object, glow)
+    bpy.ops.object.shade_smooth()
+    data = bpy.data.lights.new(f'{name}Light', 'POINT')
+    data.energy = 6
+    data.color = (1.0, 0.72, 0.45)
+    data.shadow_soft_size = 0.03
+    light = bpy.data.objects.new(f'{name}Light', data)
+    bpy.context.collection.objects.link(light)
+    light.location = at + Vector((0, 0, 0.0))
+
+
+def add_simready(name, cache, location, yaw=0.0, scale=1.0):
+    root, meshes = import_asset(simready_asset(name, cache))
+    return place(root, meshes, location, yaw, scale)
+
+
+def build_cafe(args):
+    """Café counter: latte and croissant beside the figure, espresso bar softly blurred behind."""
+    h = args.height
+    cache = args.cache
+    bounds, figure = import_figure(args.model, h, args.yaw, 0.0)
+    wood = textured_material('CounterWood', polyhaven_texture(CAFE_WOOD, cache), 0.8)
+
+    # Front counter (figure stands on it) and the back bar behind the aisle.
+    add_box('Counter', (3.2, 0.8, 0.05), (0, 0.15, -0.025), wood, bevel=0.004)
+    back_y, back_top = 1.25, -0.02
+    add_box('BackBarTop', (3.2, 0.52, 0.04), (0, back_y, back_top - 0.02), wood, bevel=0.003)
+    add_box('BackBarCabinet', (3.2, 0.5, 0.9), (0, back_y, back_top - 0.49), principled('Cabinet', '#4A3020', 0.55))
+    add_box('BackWall', (4.0, 0.06, 2.4), (0, 1.55, 0.6), principled('CafeWall', '#CDB497', 0.9))
+    add_box('Floor', (4.0, 4.0, 0.04), (0, 0.5, -1.0), principled('CafeFloor', '#5B4636', 0.6))
+    add_box('Ceiling', (4.0, 4.0, 0.04), (0, 0.5, 1.5), principled('CafeCeiling', '#EDE4D6', 0.9))
+
+    # Back bar: espresso machine with cups on top, grinder, jars of beans.
+    add_espresso_machine((0.62, back_y, back_top))
+    for i, x in enumerate((0.44, 0.56, 0.68, 0.8)):
+        add_simready('dishware_cup_tea_a01', cache, (x, back_y + 0.05, back_top + 0.38), 90 + i * 25, 0.75)
+    add_grinder((0.12, back_y, back_top))
+    for i, x in enumerate((-0.32, -0.45, -0.58)):
+        add_simready('container_jar_glass_gold_a01', cache, (x, back_y + 0.06, back_top), i * 40, 0.9 - 0.1 * i)
+
+    # Wall shelf with mugs, and a frameless-looking chalkboard (no text).
+    shelf_wood = principled('ShelfWood', '#8A5E3C', 0.5)
+    add_box('WallShelf', (0.9, 0.16, 0.025), (-0.45, 1.46, 0.36), shelf_wood, bevel=0.002)
+    for i, (name, x) in enumerate((('kitchenware_mug_c01', -0.75), ('dishware_mug_coffee_a01', -0.58),
+                                    ('kitchenware_mug_a01', -0.4), ('dishware_cup_tea_a01', -0.22))):
+        add_simready(name, cache, (x, 1.46, 0.3725), 200 + i * 30, 0.9)
+    add_box('Chalkboard', (0.62, 0.02, 0.46), (0.42, 1.515, 0.62), principled('Chalk', '#22282A', 0.85))
+    add_box('ChalkFrame', (0.66, 0.015, 0.5), (0.42, 1.522, 0.62), shelf_wood)
+    root, meshes = import_asset(polyhaven_model('potted_plant_02', cache))
+    place(root, meshes, (-0.95, back_y + 0.05, back_top), 0, height=0.42)
+
+    # Pendant lamps over the bar.
+    add_pendant('PendantL', (-0.42, 0.95, 0.36))
+    add_pendant('PendantR', (0.5, 1.05, 0.4))
+
+    # Front props: croissant on a plate and a latte on a saucer, left of the figure.
+    ceramic = principled('PlateCeramic', '#F4F0E8', 0.2, **{'Coat Weight': 0.5})
+    plate_at = Vector((-0.17, 0.2, 0.0))
+    add_cylinder('Plate', 0.085, 0.012, plate_at + Vector((0, 0, 0.006)), ceramic, bevel=0.004)
+    add_simready('food_prepared_croissant_a01', cache, plate_at + Vector((0, 0, 0.012)), 100, 0.85)
+    cup_at = Vector((-0.26, 0.42, 0.0))
+    add_cylinder('Saucer', 0.065, 0.01, cup_at + Vector((0, 0, 0.005)), ceramic, bevel=0.004)
+    lo, hi = add_simready('dishware_cup_tea_a01', cache, cup_at + Vector((0, 0, 0.01)), 200, 0.8)
+    add_cylinder('Latte', 0.034, 0.002, Vector((cup_at.x, cup_at.y, hi.z - 0.012)),
+                 principled('LatteFoam', '#D9B48A', 0.35))
+
+    # Light: window off-screen on the left, warm fill from the room.
+    add_area_light('Window', (-1.3, 0.1, 0.55), (0, 0.1, h * 0.6), 1.2, 70, color=(1.0, 0.93, 0.84), size_y=1.0)
+    add_area_light('RoomFill', (0.7, -1.2, 0.45), (0, 0, h * 0.5), 1.2, 14, color=(1.0, 0.88, 0.75))
+    set_world_color((0.3, 0.24, 0.19), 0.6)
+
+    bpy.context.scene.view_settings.exposure = 0.2
+    add_camera(bounds, figure, args, args.angle if args.angle is not None else 10, 7, lens=35,
+               fstop=args.fstop or 8, fill=0.8, aim=0.5)
+
+
+# --------------------------------------------------------------------------
 # Render setup
 # --------------------------------------------------------------------------
 
@@ -710,7 +880,7 @@ def configure_render(args):
 def main():
     args = parse_args()
     bpy.ops.wm.read_factory_settings(use_empty=True)
-    {'studio': build_studio, 'desk': build_desk}[args.scene](args)
+    {'studio': build_studio, 'desk': build_desk, 'cafe': build_cafe}[args.scene](args)
     configure_render(args)
     cam = bpy.context.scene.camera
     print(f'[showcase] focus distance {cam.data.dof.focus_distance:.3f} m, f/{cam.data.dof.aperture_fstop}')
