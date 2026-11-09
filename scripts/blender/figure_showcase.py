@@ -1375,19 +1375,16 @@ def build_nordic(args):
                           ('WinSill', (wx1 - wx0 + 0.06, 0.12, 0.03), ((wx0 + wx1) / 2, wall_y - 0.01, wz0))):
         add_box(nm, size, loc, frame)
     add_window_view('OvercastView', os.path.join(TEXTURES, 'overcast_window_view.jpg'),
-                    ((wx0 + wx1) / 2, wall_y + 0.9, 0.6), (2.4, 1.6), 1.0)
+                    ((wx0 + wx1) / 2, wall_y + 0.9, 0.6), (2.4, 1.6), 2.6)
     add_box('Floor', (5.0, 5.0, 0.04), (0, 0.5, floor_z), principled('LightFloor', '#CDBBA3', 0.6))
 
-    # Picture ledge on the wall: framed line drawing and a few books.
-    oak = textured_material('LedgeOak', polyhaven_texture('oak_veneer_01', cache), 0.5)
-    ledge_z = 0.1
-    add_box('Ledge', (0.75, 0.09, 0.022), (0.42, wall_y - 0.045, ledge_z), oak, bevel=0.002)
-    add_box('LedgeLip', (0.75, 0.012, 0.02), (0.42, wall_y - 0.085, ledge_z + 0.02), oak)
-    add_framed_picture('LineArt', (0.3, wall_y - 0.05, ledge_z + 0.011), (0.26, 0.36),
-                       os.path.join(TEXTURES, 'line_drawing.jpg'), principled('ArtFrame', '#C9A27C', 0.5))
-    for i, (x, color, hgt, lean) in enumerate(((0.58, '#9EA3A6', 0.22, 0), (0.605, '#E3E1DC', 0.2, 0), (0.64, '#5E6266', 0.21, -12))):
-        add_box(f'LedgeBook{i}', (0.022, 0.15, hgt), (x, wall_y - 0.08, ledge_z + 0.011 + hgt / 2),
-                principled(f'LedgeBook{i}', color, 0.7), bevel=0.002, rotation=(0, math.radians(lean), 0))
+    # A framed line drawing standing on the desk, leaning on the wall, with a few books beside it.
+    add_framed_picture('LineArt', (0.16, wall_y - 0.06, 0.0), (0.3, 0.4),
+                       os.path.join(TEXTURES, 'line_drawing_bold.jpg'), principled('ArtFrame', '#C9A27C', 0.5), lean_deg=10)
+    for i, (x, color, hgt, lean) in enumerate(((0.36, '#9EA3A6', 0.24, 0), (0.388, '#E3E1DC', 0.22, 0),
+                                               (0.418, '#5E6266', 0.23, 0), (0.46, '#B9BDC0', 0.2, -14))):
+        add_box(f'DeskBook{i}', (0.026, 0.17, hgt), (x, wall_y - 0.1, hgt / 2),
+                principled(f'DeskBook{i}', color, 0.7), bevel=0.002, rotation=(0, math.radians(lean), 0))
 
     # Props: white mug (left), succulent in a concrete pot (right, back), grey notebook (right, front).
     add_mug('WhiteMug', (-0.2, 0.2, 0.0), principled('WhiteCeramic', '#F7F7F5', 0.15, **{'Coat Weight': 0.8}))
@@ -1400,17 +1397,17 @@ def build_nordic(args):
     bump.inputs['Strength'].default_value = 0.15
     concrete.node_tree.links.new(noise.outputs['Fac'], bump.inputs['Height'])
     concrete.node_tree.links.new(bump.outputs['Normal'], concrete.node_tree.nodes['Principled BSDF'].inputs['Normal'])
-    for m in meshes:
-        for slot in m.material_slots:
-            if 'pot' in slot.material.name.lower():
-                slot.material = concrete
+    for m in meshes:  # pot, soil and plant share one material: only re-skin the pot
+        if m.name.split('.')[0].endswith('_pot'):
+            m.material_slots[0].material = concrete
     add_notebook('Notebook', (0.18, -0.01, 0.0), (0.21, 0.15, 0.016), -12, principled('NotebookCover', '#6E7378', 0.8))
 
-    # Soft overcast daylight through the window plus neutral bounce from the room.
-    add_area_light('WindowLight', ((wx0 + wx1) / 2, wall_y - 0.05, 0.55), (0, 0, h * 0.6), 0.9, 45,
-                   color=(0.93, 0.96, 1.0), size_y=1.0)
-    add_area_light('RoomBounce', (0.6, -1.0, 0.5), (0, 0, h * 0.5), 1.5, 18, color=(1.0, 1.0, 1.0))
-    set_world_color((0.85, 0.87, 0.9), 0.5)
+    # The window is the key light (soft, cool overcast daylight from behind-left),
+    # with only a weak neutral bounce from the room so the light matches the view.
+    add_area_light('WindowLight', ((wx0 + wx1) / 2, wall_y - 0.05, 0.55), (0, 0, h * 0.6), 0.9, 75,
+                   color=(0.9, 0.95, 1.0), size_y=1.0)
+    add_area_light('RoomBounce', (0.6, -1.0, 0.5), (0, 0, h * 0.5), 1.5, 8, color=(0.97, 0.98, 1.0))
+    set_world_color((0.8, 0.84, 0.9), 0.35)
 
     add_camera(bounds, figure, args, args.angle if args.angle is not None else 10, 7, lens=35,
                fstop=args.fstop or 8, fill=0.8, aim=0.5)
