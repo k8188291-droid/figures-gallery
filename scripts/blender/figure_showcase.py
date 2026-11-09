@@ -270,8 +270,12 @@ def import_asset(path):
     return root, meshes
 
 
-def place(root, meshes, location, yaw_deg=0.0, scale=1.0, height=None):
-    """Rotate/scale a root so its meshes sit centred on `location` (bottom at location.z)."""
+def place(root, meshes, location, yaw_deg=0.0, scale=1.0, height=None, tilt_deg=0.0):
+    """Rotate/scale a root so its meshes sit centred on `location` (bottom at location.z).
+
+    `height` scales the asset to that upright height before an optional `tilt_deg`
+    (rotation about X, e.g. to lay a branch on its side).
+    """
     root.rotation_euler = (0, 0, math.radians(yaw_deg))
     root.scale = (scale,) * 3
     bpy.context.view_layer.update()
@@ -279,7 +283,8 @@ def place(root, meshes, location, yaw_deg=0.0, scale=1.0, height=None):
         lo, hi = world_bounds(meshes)
         s = scale * height / (hi.z - lo.z)
         root.scale = (s,) * 3
-        bpy.context.view_layer.update()
+    root.rotation_euler = (math.radians(tilt_deg), 0, math.radians(yaw_deg))
+    bpy.context.view_layer.update()
     lo, hi = world_bounds(meshes)
     centre = (lo + hi) / 2
     root.location += Vector(location) - Vector((centre.x, centre.y, lo.z))
@@ -493,19 +498,22 @@ WINDOW_WALL_ANGLE = math.radians(35)
 WINDOW = (-0.6, 0.65, 0.05, 1.2)     # along-wall y0, y1 and z0, z1 of the opening
 
 
-def textured_material(name, maps, tile_m):
+def textured_material(name, maps, tile_m, box=False):
     mat = new_material(name)
     nt = mat.node_tree
     bsdf = nt.nodes['Principled BSDF']
     coord = nt.nodes.new('ShaderNodeTexCoord')
     mapping = nt.nodes.new('ShaderNodeMapping')
-    mapping.inputs['Scale'].default_value = (1 / tile_m, 1 / tile_m, 1)
+    mapping.inputs['Scale'].default_value = (1 / tile_m, 1 / tile_m, 1 / tile_m if box else 1)
     nt.links.new(coord.outputs['Object'], mapping.inputs['Vector'])
 
     def tex(path, colorspace):
         node = nt.nodes.new('ShaderNodeTexImage')
         node.image = bpy.data.images.load(path, check_existing=True)
         node.image.colorspace_settings.name = colorspace
+        if box:  # project on all sides, for walls and blocks
+            node.projection = 'BOX'
+            node.projection_blend = 0.2
         nt.links.new(mapping.outputs['Vector'], node.inputs['Vector'])
         return node
 
@@ -957,7 +965,7 @@ def add_pine_cone(name, location, yaw_deg, length=0.07, radius=0.024):
 # Scene: records
 # --------------------------------------------------------------------------
 
-def add_turntable(at, yaw_deg):
+def add_turntable(at, yaw_deg, scale=1.0):
     at = Vector(at)
     walnut = principled('Plinth', '#5A3521', 0.35, **{'Coat Weight': 0.6, 'Coat Roughness': 0.1})
     alu = principled('Aluminium', '#C0C2C4', 0.25, Metallic=1.0)
@@ -993,6 +1001,7 @@ def add_turntable(at, yaw_deg):
     for p in parts:
         p.parent = root
     root.rotation_euler = (0, 0, math.radians(yaw_deg))
+    root.scale = (scale,) * 3
     root.location = at
 
 
@@ -1027,7 +1036,7 @@ def add_floor_lamp(at, top=0.62):
     wood = principled('LampWood', '#8B5E3C', 0.5)
     for i in range(3):
         a = math.radians(90 + i * 120)
-        foot = at + Vector((math.cos(a) * 0.22, math.sin(a) * 0.22, at.z))
+        foot = at + Vector((math.cos(a) * 0.22, math.sin(a) * 0.22, 0))
         head = Vector((at.x, at.y, top - 0.12))
         mid = (foot + head) / 2
         d = head - foot
@@ -1047,7 +1056,7 @@ def add_floor_lamp(at, top=0.62):
 
 
 def build_records(args):
-    """Music corner: figure on a walnut sideboard between a turntable and record sleeves."""
+    """Music corner: figure on a walnut sideboard between a record player and record sleeves."""
     h = args.height
     cache = args.cache
     bounds, figure = import_figure(args.model, h, args.yaw, 0.0)
@@ -1055,26 +1064,30 @@ def build_records(args):
     top = textured_material('SideboardWood', polyhaven_texture('walnut_veneer', cache), 0.7)
     add_box('Sideboard', (2.0, 0.5, 0.04), (0, 0.05, -0.02), top, bevel=0.003)
     add_box('SideboardBody', (1.96, 0.46, 0.7), (0, 0.05, -0.39), principled('SideboardBody', '#4A2E1E', 0.5))
-    add_box('BackWall', (5.0, 0.06, 3.0), (0, 1.7, 0.6), principled('LoungeWall', '#D6C2A6', 0.9))
+    add_box('BackWall', (5.0, 0.06, 3.0), (0, 1.5, 0.6), principled('LoungeWall', '#D9C1A0', 0.9))
     add_box('Floor', (5.0, 5.0, 0.04), (0, 0.5, floor_z), principled('LoungeFloor', '#4D3627', 0.55))
 
-    add_turntable((-0.42, 0.3, 0.0), 28)
-    sleeve_colors = ['#E7DCC8', '#C9A982', '#F1ECE3', '#B28A64', '#DCCFB9']
-    for i, color in enumerate(sleeve_colors):
-        add_box(f'Sleeve{i}', (0.31, 0.31, 0.004), (0.26 + 0.006 * i, 0.16 - 0.004 * i, 0.002 + i * 0.0042),
-                principled(f'Sleeve{i}', color, 0.75), rotation=(0, 0, math.radians(-8 + 4 * i)))
+    # Compact record player on the left: small enough that the record reads at figure scale.
+    add_turntable((-0.3, 0.2, 0.0), 16, scale=0.7)
+    # A neat stack of plain sleeves on the right.
+    for i, color in enumerate(['#D8C7A8', '#E9DFCC', '#C4A57E', '#EFE8DA']):
+        add_box(f'Sleeve{i}', (0.31, 0.31, 0.0045), (0.29 + 0.004 * i, 0.16 - 0.003 * i, 0.00225 + i * 0.0046),
+                principled(f'Sleeve{i}', color, 0.75), bevel=0.0008, rotation=(0, 0, math.radians(-5 + 2.5 * i)))
+    # Leafy plant standing on the floor behind the sideboard: only the leaves show, top-left.
     root, meshes = import_asset(polyhaven_model('potted_plant_02', cache))
-    place(root, meshes, (-0.8, 0.22, 0.0), 20, height=0.45)
+    place(root, meshes, (-0.6, 0.55, floor_z), 40, height=1.0)
 
-    add_record_shelf((0.18, 1.45, floor_z + 0.55))
-    add_floor_lamp(Vector((-0.6, 1.35, floor_z)), top=0.55)
+    add_record_shelf((0.12, 1.2, floor_z + 0.55))
+    add_floor_lamp(Vector((-0.42, 1.1, floor_z)), top=0.3)
 
     # Warm evening light: the floor lamp, a warm key from the front-left, dim room fill.
-    add_area_light('LampKey', (-0.7, -0.5, 0.45), (0, 0, h * 0.6), 0.8, 22, color=(1.0, 0.8, 0.6))
-    add_area_light('RoomFill', (0.7, -1.0, 0.3), (0, 0, h * 0.5), 1.2, 6, color=(1.0, 0.9, 0.8))
-    set_world_color((0.18, 0.13, 0.1), 0.5)
+    add_area_light('LampKey', (-0.7, -0.5, 0.45), (0, 0, h * 0.6), 0.8, 24, color=(1.0, 0.78, 0.55))
+    add_area_light('RoomFill', (0.7, -1.0, 0.3), (0, 0, h * 0.5), 1.2, 7, color=(1.0, 0.88, 0.75))
+    add_area_light('ShelfWash', (0.6, 0.4, 0.5), (0.5, 1.2, 0.1), 0.6, 10, color=(1.0, 0.8, 0.6))
+    set_world_color((0.2, 0.14, 0.1), 0.5)
 
-    add_camera(bounds, figure, args, args.angle if args.angle is not None else 10, 7, lens=35,
+    # Higher camera than the other scenes so the record on the player is visible.
+    add_camera(bounds, figure, args, args.angle if args.angle is not None else 10, 20, lens=35,
                fstop=args.fstop or 8, fill=0.8, aim=0.5)
 
 
@@ -1082,78 +1095,144 @@ def build_records(args):
 # Scene: fireplace
 # --------------------------------------------------------------------------
 
-def add_fireplace(at, floor_z):
-    """Stone fireplace with a raised hearth, logs and a glowing fire."""
+def add_fireplace(at, floor_z, cache):
+    """Stacked-stone fireplace with a raised hearth, logs, flames and a garland on the mantel."""
     at = Vector(at)
-    stone = principled('Stone', '#8C8178', 0.85)
-    noise = stone.node_tree.nodes.new('ShaderNodeTexVoronoi')
-    noise.inputs['Scale'].default_value = 9.0
-    ramp = stone.node_tree.nodes.new('ShaderNodeValToRGB')
-    ramp.color_ramp.elements[0].color = hex_rgba('#6E655E')
-    ramp.color_ramp.elements[1].color = hex_rgba('#A39789')
-    stone.node_tree.links.new(noise.outputs['Distance'], ramp.inputs['Fac'])
-    stone.node_tree.links.new(ramp.outputs['Color'], stone.node_tree.nodes['Principled BSDF'].inputs['Base Color'])
-    w, d = 1.3, 0.4
-    hearth_top = floor_z + 0.25
-    open_w, open_top = 0.7, hearth_top + 0.55
-    add_box('Hearth', (w + 0.2, d + 0.25, 0.25), at + Vector((0, -0.12, floor_z + 0.125)), stone)
-    add_box('FireL', ((w - open_w) / 2, d, 1.6), at + Vector((-(w + open_w) / 4, 0, hearth_top + 0.8)), stone)
-    add_box('FireR', ((w - open_w) / 2, d, 1.6), at + Vector(((w + open_w) / 4, 0, hearth_top + 0.8)), stone)
-    add_box('FireTop', (open_w, d, 1.6 - 0.55), at + Vector((0, 0, open_top + (1.6 - 0.55) / 2)), stone)
-    add_box('FireBack', (open_w, 0.05, 0.55), at + Vector((0, d / 2, hearth_top + 0.275)), principled('Soot', '#1A1512', 0.9))
-    add_box('Mantel', (w + 0.15, d + 0.12, 0.08), at + Vector((0, -0.04, open_top + 0.14)), principled('MantelWood', '#5C3B26', 0.5))
-    bark = principled('Bark', '#3D2A1E', 0.9)
-    for i, (x, rot) in enumerate(((-0.1, 15), (0.1, -10), (0.0, 80))):
-        bpy.ops.mesh.primitive_cylinder_add(radius=0.045, depth=0.42, location=at + Vector((x, 0.02, hearth_top + 0.05 + 0.05 * (i == 2))),
+    stone = textured_material('Stone', polyhaven_texture('castle_wall_varriation', cache), 0.45, box=True)
+    w, d = 1.1, 0.35
+    hearth_top = floor_z + 0.3
+    open_w, open_h = 0.6, 0.42
+    open_top = hearth_top + open_h
+    tall = 1.8
+    add_box('Hearth', (w + 0.16, d + 0.22, 0.3), at + Vector((0, -0.11, floor_z + 0.15)), stone)
+    add_box('FireL', ((w - open_w) / 2, d, tall), at + Vector((-(w + open_w) / 4, 0, hearth_top + tall / 2)), stone)
+    add_box('FireR', ((w - open_w) / 2, d, tall), at + Vector(((w + open_w) / 4, 0, hearth_top + tall / 2)), stone)
+    add_box('FireTop', (open_w, d, tall - open_h), at + Vector((0, 0, open_top + (tall - open_h) / 2)), stone)
+    soot = principled('Soot', '#16110E', 0.95)
+    add_box('FireBack', (open_w, 0.04, open_h), at + Vector((0, d / 2 - 0.02, hearth_top + open_h / 2)), soot)
+    add_box('FireFloor', (open_w, d, 0.01), at + Vector((0, 0, hearth_top + 0.005)), soot)
+    mantel_z = open_top + 0.08
+    add_box('Mantel', (w + 0.2, d + 0.14, 0.07), at + Vector((0, -0.05, mantel_z)),
+            principled('MantelWood', '#5C3B26', 0.45), bevel=0.006)
+
+    # Logs with glowing embers underneath.
+    bark = principled('Bark', '#3A281C', 0.9)
+    ember = emission_material('Ember', (1.0, 0.28, 0.05, 1.0), 6)
+    for i, (x, y, rot, z) in enumerate(((-0.08, 0.02, 12, 0.04), (0.09, 0.05, -14, 0.04), (0.0, 0.0, 85, 0.1))):
+        bpy.ops.mesh.primitive_cylinder_add(radius=0.04, depth=0.4, location=at + Vector((x, y, hearth_top + z)),
                                             rotation=(0, math.radians(90), math.radians(rot)))
         assign(bpy.context.active_object, bark)
-    flame = emission_material('Flame', (1.0, 0.32, 0.06, 1.0), 4)
-    core = emission_material('FlameCore', (1.0, 0.6, 0.2, 1.0), 7)
-    for i, (x, hgt) in enumerate(((-0.15, 0.16), (-0.05, 0.24), (0.06, 0.2), (0.16, 0.14))):
-        add_blob(f'Flame{i}', at + Vector((x, 0.02, hearth_top + 0.1 + hgt / 2)), (0.045, 0.03, hgt / 2), flame)
-        add_blob(f'FlameCore{i}', at + Vector((x, 0.0, hearth_top + 0.09 + hgt / 4)), (0.025, 0.02, hgt / 4), core)
-    add_point_light('FireLight', at + Vector((0, 0.05, hearth_top + 0.15)), 30, (1.0, 0.5, 0.18), radius=0.12)
+    add_box('Embers', (0.36, 0.14, 0.015), at + Vector((0, 0.03, hearth_top + 0.012)), ember)
+    # Flames: several tongues of different heights, a hot core in each.
+    flame = emission_material('Flame', (1.0, 0.28, 0.04, 1.0), 2.2)
+    core = emission_material('FlameCore', (1.0, 0.5, 0.14, 1.0), 3.5)
+    tongues = ((-0.17, 0.12), (-0.1, 0.2), (-0.03, 0.26), (0.04, 0.22), (0.11, 0.17), (0.17, 0.1), (0.0, 0.14))
+    for i, (x, hgt) in enumerate(tongues):
+        base = at + Vector((x, 0.02 + 0.01 * (i % 2), hearth_top + 0.11))
+        add_blob(f'Flame{i}', base + Vector((0, 0, hgt / 2)), (0.03, 0.022, hgt / 2), flame)
+        add_blob(f'FlameCore{i}', base + Vector((0, -0.01, hgt / 4)), (0.016, 0.014, hgt / 4), core)
+    add_point_light('FireLight', at + Vector((0, -0.05, hearth_top + 0.15)), 35, (1.0, 0.5, 0.18), radius=0.12)
+
+    # Garland with warm fairy lights along the mantel edge, a pillar candle at each end.
+    green = principled('Garland', '#2F4A2A', 0.7)
+    bulb = emission_material('FairyBulb', '#FFC57A', 25)
+    n = 22
+    for i in range(n):
+        t = i / (n - 1)
+        x = -(w + 0.1) / 2 + t * (w + 0.1)
+        sag = 0.035 * math.sin(math.pi * ((t * 3) % 1.0))
+        p = at + Vector((x, -d / 2 - 0.13, mantel_z - 0.02 - sag))
+        add_blob(f'Garland{i}', p, (0.03, 0.025, 0.022), green, 1)
+        if i % 2 == 0:
+            add_blob(f'Fairy{i}', p + Vector((0.01, -0.025, -0.01)), (0.006, 0.006, 0.006), bulb, 1)
+    for x in (-(w / 2) + 0.08, (w / 2) - 0.08):
+        add_cylinder('MantelCandle', 0.025, 0.12, at + Vector((x, -0.02, mantel_z + 0.095)),
+                     principled('Wax', '#EFE6D6', 0.4, **{'Subsurface Weight': 0.4}))
+        add_blob('MantelFlame', at + Vector((x, -0.02, mantel_z + 0.17)), (0.005, 0.005, 0.012),
+                 emission_material('MantelFlame', '#FFB25C', 40))
+
+
+def add_snowy_window(centre, size):
+    """Window frame with a soft snowy view: sky gradient, snow and dark fir silhouettes."""
+    c = Vector(centre)
+    w, hgt = size
+    frame = principled('WinFrame', '#F0E9DE', 0.5)
+    add_box('WinFrameL', (0.04, 0.06, hgt), c + Vector((-w / 2, 0, 0)), frame)
+    add_box('WinFrameR', (0.04, 0.06, hgt), c + Vector((w / 2, 0, 0)), frame)
+    add_box('WinFrameT', (w, 0.06, 0.04), c + Vector((0, 0, hgt / 2)), frame)
+    add_box('WinFrameB', (w + 0.08, 0.12, 0.04), c + Vector((0, -0.03, -hgt / 2)), frame)
+    add_box('WinMullion', (0.025, 0.05, hgt), c, frame)
+    add_box('WinTransom', (w, 0.05, 0.025), c + Vector((0, 0, hgt * 0.12)), frame)
+    sky = emission_material('SnowSky', '#9DB0C6', 0.9)
+    add_box('WinSky', (w + 1.0, 0.01, hgt + 0.6), c + Vector((0, 0.5, 0.15)), sky)
+    snow = emission_material('SnowGround', '#DCE4EC', 0.8)
+    add_box('WinSnow', (w + 1.0, 0.4, 0.02), c + Vector((0, 0.3, -hgt / 2 - 0.05)), snow)
+    fir = principled('FirSilhouette', '#1F2A26', 0.9)
+    for i, (x, s) in enumerate(((-0.25, 0.5), (0.05, 0.7), (0.3, 0.45))):
+        bpy.ops.mesh.primitive_cone_add(radius1=0.12 * s, depth=0.55 * s,
+                                        location=c + Vector((x, 0.35, -hgt / 2 + 0.275 * s)))
+        assign(bpy.context.active_object, fir)
 
 
 def build_fireplace(args):
-    """Winter evening: figure on a wooden table, candle and pine cones, fire glowing behind."""
+    """Winter evening: candle, pine cones and a fir sprig on a wooden table, fireplace glowing behind."""
     h = args.height
     cache = args.cache
     bounds, figure = import_figure(args.model, h, args.yaw, 0.0)
     floor_z = -0.45
     wood = textured_material('TableWood', polyhaven_texture('wood_table_001', cache), 0.8)
     add_box('Table', (1.6, 0.8, 0.05), (0, 0.15, -0.025), wood, bevel=0.005)
-    add_box('BackWall', (5.0, 0.06, 3.0), (0, 1.9, 1.0), principled('CabinWall', '#B89B7E', 0.9))
+    cabin = principled('CabinWall', '#C2A486', 0.9)
+    win_c, win_w, win_h = Vector((0.22, 1.8, floor_z + 0.95)), 0.62, 0.8
+    wx0, wx1, wz0, wz1 = win_c.x - win_w / 2, win_c.x + win_w / 2, win_c.z - win_h / 2, win_c.z + win_h / 2
+    add_box('BackWallL', (wx0 + 2.5, 0.06, 3.0), ((wx0 - 2.5) / 2, 1.8, 1.0), cabin)
+    add_box('BackWallR', (2.5 - wx1, 0.06, 3.0), ((wx1 + 2.5) / 2, 1.8, 1.0), cabin)
+    add_box('BackWallB', (win_w, 0.06, wz0 + 0.5), (win_c.x, 1.8, (wz0 - 0.5) / 2), cabin)
+    add_box('BackWallT', (win_w, 0.06, 2.5 - wz1), (win_c.x, 1.8, (wz1 + 2.5) / 2), cabin)
     add_box('Floor', (5.0, 5.0, 0.04), (0, 0.5, floor_z), principled('CabinFloor', '#5A3E2B', 0.6))
-    add_box('Rug', (1.6, 1.2, 0.01), (0.2, 1.0, floor_z + 0.025), stripe_material('Rug', ['#8E2F28', '#E6D8C2', '#3D2A22'], 4))
+    add_box('Rug', (1.6, 1.2, 0.01), (0.1, 1.0, floor_z + 0.025), stripe_material('Rug', ['#8E2F28', '#E6D8C2', '#3D2A22'], 4))
 
-    add_fireplace((-0.8, 1.65, 0.0), floor_z)
-    # Garland lights on the mantel.
-    bulb = emission_material('FairyBulb', '#FFC57A', 30)
-    for i in range(9):
-        add_blob(f'Fairy{i}', (-1.4 + i * 0.15, 1.55, floor_z + 0.25 + 0.55 + 0.2), (0.008, 0.008, 0.008), bulb, 1)
+    add_fireplace((-0.62, 1.3, 0.0), floor_z, cache)
+    add_snowy_window((win_c.x, 1.78, win_c.z), (win_w, win_h))
 
-    # Sofa with a plaid throw on the right.
+    # Sofa with cushions and a plaid throw over the arm, warm table lamp beside it.
     root, meshes = import_asset(polyhaven_model('sofa_02', cache))
-    place(root, meshes, (0.6, 1.55, floor_z), -110)
-    add_box('Throw', (0.5, 0.6, 0.03), (0.35, 1.45, floor_z + 0.5), stripe_material('Plaid', ['#7A2420', '#2E3B2C', '#D9C9A8'], 10),
-            rotation=(math.radians(10), math.radians(-25), 0))
-    # Snowy window, far right.
-    add_box('WindowFrame', (0.8, 0.05, 0.9), (0.45, 1.86, floor_z + 0.95), principled('WinFrame', '#4A3022', 0.5))
-    add_box('WindowView', (0.7, 0.02, 0.8), (0.45, 1.84, floor_z + 0.95), emission_material('SnowView', '#7F93AA', 0.5))
+    s_lo, s_hi = place(root, meshes, (0.75, 1.25, floor_z), -112)
+    fabric = principled('SofaFabric', '#CDB79C', 0.9, **{'Sheen Weight': 0.5})
+    for m in meshes:
+        for slot in m.material_slots:
+            slot.material = fabric
+    root, meshes = import_asset(polyhaven_model('throw_pillows_01', cache))
+    place(root, meshes, (0.6, 1.27, s_lo.z + 0.42), -112, height=0.32)
+    add_box('Throw', (0.42, 0.55, 0.025), (0.4, 1.12, floor_z + 0.5),
+            stripe_material('Plaid', ['#7A2420', '#2E3B2C', '#D9C9A8'], 12), bevel=0.01,
+            rotation=(math.radians(8), math.radians(-35), math.radians(-20)))
+    add_floor_lamp(Vector((0.75, 1.62, floor_z)), top=0.62)
 
-    # Props: pillar candle with a flame, two pine cones.
-    lo, hi = place(*import_asset(simready_asset('decor_candle_a01', cache)), (-0.2, 0.22, 0.0), 0, 0.55)
-    add_blob('CandleFlame', ((lo.x + hi.x) / 2, (lo.y + hi.y) / 2, hi.z + 0.012), (0.005, 0.005, 0.013),
-             emission_material('CandleFlame', '#FFB25C', 40))
-    add_point_light('CandleLight', ((lo.x + hi.x) / 2, (lo.y + hi.y) / 2, hi.z + 0.02), 1.2, (1.0, 0.62, 0.3), radius=0.005)
-    add_pine_cone('PineCone1', (-0.12, 0.08, 0.0), 35, length=0.055, radius=0.019)
-    add_pine_cone('PineCone2', (0.13, 0.13, 0.0), -60, length=0.05, radius=0.017)
+    # Props: candle in a glass holder, two pine cones and a fir sprig.
+    holder_at = Vector((-0.17, 0.16, 0.0))
+    lo, hi = place(*import_asset(simready_asset('decor_candle_a01', cache)), holder_at, 0, 0.42)
+    glass = principled('HolderGlass', '#F4EFE8', 0.02, **{'Transmission Weight': 1.0, 'IOR': 1.45})
+    holder = add_cylinder('Holder', 0.045, 0.08, holder_at + Vector((0, 0, 0.04)), glass, bevel=0.003)
+    bm = bmesh.new()
+    bm.from_mesh(holder.data)
+    bmesh.ops.delete(bm, geom=[f for f in bm.faces if f.normal.z > 0.9], context='FACES')
+    bm.to_mesh(holder.data)
+    bm.free()
+    solid = holder.modifiers.new('Solidify', 'SOLIDIFY')
+    solid.thickness = 0.003
+    holder.modifiers.move(len(holder.modifiers) - 1, 0)
+    flame_at = Vector(((lo.x + hi.x) / 2, (lo.y + hi.y) / 2, hi.z + 0.01))
+    add_blob('CandleFlame', flame_at, (0.004, 0.004, 0.011), emission_material('CandleFlame', '#FFB25C', 40))
+    add_point_light('CandleLight', flame_at + Vector((0, 0, 0.006)), 1.5, (1.0, 0.62, 0.3), radius=0.004)
+    add_pine_cone('PineCone1', (-0.11, 0.05, 0.0), 35, length=0.055, radius=0.019)
+    add_pine_cone('PineCone2', (0.14, 0.12, 0.0), -60, length=0.05, radius=0.017)
+    root, meshes = import_asset(polyhaven_model('fir_sapling', cache))
+    place(root, meshes, (-0.2, 0.0, 0.0), 70, height=0.16, tilt_deg=88)
 
-    # Warm lamp key from the front-left, fire glow from behind-left, cool hint from the window.
-    add_area_light('LampKey', (-0.7, -0.6, 0.5), (0, 0, h * 0.6), 0.8, 18, color=(1.0, 0.8, 0.6))
-    add_area_light('RoomFill', (0.7, -1.0, 0.3), (0, 0, h * 0.5), 1.2, 5, color=(1.0, 0.9, 0.8))
-    set_world_color((0.15, 0.11, 0.09), 0.5)
+    add_area_light('LampKey', (-0.7, -0.6, 0.5), (0, 0, h * 0.6), 0.8, 20, color=(1.0, 0.8, 0.6))
+    add_area_light('RoomFill', (0.7, -1.0, 0.3), (0, 0, h * 0.5), 1.2, 6, color=(1.0, 0.9, 0.8))
+    set_world_color((0.16, 0.12, 0.1), 0.5)
 
     bpy.context.scene.view_settings.exposure = 0.35
     add_camera(bounds, figure, args, args.angle if args.angle is not None else 10, 7, lens=35,
