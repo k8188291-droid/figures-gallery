@@ -56,7 +56,7 @@ TEXTURES = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'textures')
 def parse_args():
     argv = sys.argv[sys.argv.index('--') + 1:] if '--' in sys.argv else []
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument('--model', required=True, help='GLB/GLTF file to showcase')
+    p.add_argument('--model', required=True, help='GLB/GLTF or .blend file to showcase')
     p.add_argument('--scene', choices=['studio', 'desk', 'cafe', 'records', 'fireplace', 'nordic', 'nightcity'], default='studio')
     p.add_argument('--out', required=True, help='Output image path (.png/.jpg)')
     p.add_argument('--yaw', type=float, default=0.0,
@@ -316,6 +316,8 @@ def pvc_finish(materials, gamma=1.18, saturation=1.08, roughness=0.5):
         bsdf = next((n for n in nt.nodes if n.type == 'BSDF_PRINCIPLED'), None)
         if not bsdf:
             continue
+        if bsdf.inputs['Roughness'].is_linked:
+            continue  # a full PBR material (roughness/ORM maps): keep it as authored
         if not bsdf.inputs['Roughness'].is_linked:
             bsdf.inputs['Roughness'].default_value = min(bsdf.inputs['Roughness'].default_value, roughness)
         bsdf.inputs['Coat Weight'].default_value = 0.15
