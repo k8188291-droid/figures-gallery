@@ -5,7 +5,7 @@ Usage:
       --model "models/holo/holo coffee.glb" --yaw -90 --scene studio --out renders/holo_coffee_studio.png
 
 Scenes:
-  studio  High-key catalogue shot: warm seamless backdrop (peach to caramel),
+  studio  High-key catalogue shot: beige seamless backdrop,
           large soft boxes, low contrast, no base.
   desk    Cozy desk by a window: a modelled room with real blinds, so the
           morning sun falls on the desk and the figure in stripes; keyboard,
@@ -426,7 +426,7 @@ def build_studio(args):
     h = args.height
     bounds, figure = import_figure(args.model, h, args.yaw, 0.0)
 
-    backdrop = add_cyclorama('Cyclorama', principled('Backdrop', '#C48E70', 0.95), back=0.9, radius=0.5)
+    backdrop = add_cyclorama('Cyclorama', principled('Backdrop', '#E4D3BC', 0.95), back=0.9, radius=0.5)
 
     face = (0, 0, h * 0.72)
     body = (0, 0, h * 0.5)
@@ -437,9 +437,9 @@ def build_studio(args):
     rim = add_area_light('Rim', (0.28, 0.32, 0.30), body, 0.12, 2.0, color=(1.0, 0.92, 0.84), size_y=0.5)
     link_lights([rim], figure)
     # Separate wash on the backdrop: bright peach on the left, falling to caramel on the right.
-    wash = add_area_light('BackdropWash', (-0.9, 0.1, 0.7), (-0.6, 1.4, 0.3), 1.0, 90, color=(1.0, 0.9, 0.8))
+    wash = add_area_light('BackdropWash', (-0.9, 0.1, 0.7), (-0.6, 1.4, 0.3), 1.0, 40, color=(1.0, 0.95, 0.88))
     link_lights([wash], [backdrop])
-    set_world_color((0.55, 0.42, 0.34), 0.35)
+    set_world_color((0.55, 0.5, 0.44), 0.35)
 
     add_camera(bounds, figure, args, args.angle if args.angle is not None else 15, 12, lens=85,
                fstop=args.fstop or 11, fill=0.8)
@@ -451,8 +451,9 @@ def build_studio(args):
 
 DESK_WOOD = 'oak_veneer_01'
 DESK_OUTSIDE = 'autumn_forest_04'
-WALL_Y = 1.0             # back wall (window wall) behind the desk
-WINDOW = (-0.95, -0.08, 0.05, 1.2)   # x0, x1, z0, z1 of the window opening
+WALL_Y = 1.0             # back wall behind the desk
+LEFT_X = -0.8            # left wall, holding the window (outside the frame)
+WINDOW = (-0.8, 0.45, 0.05, 1.2)     # y0, y1, z0, z1 of the window opening
 
 
 def textured_material(name, maps, tile_m):
@@ -482,47 +483,48 @@ def textured_material(name, maps, tile_m):
 
 
 def build_room(wood, sun_dir):
-    """A simple room: window wall with blinds, side walls, floor and ceiling.
+    """A simple room: back wall, a left wall with a blinded window, floor and ceiling.
 
-    Everything the camera sees is real geometry lit by the same sun, so the
-    figure and the background always match.
+    The window is on the left wall, outside the frame, so the sun lights the
+    figure from the front-left instead of from behind. Everything the camera
+    sees is real geometry lit by the same sun, so figure and set always match.
     """
-    x0, x1, z0, z1 = WINDOW
-    floor_z, ceil_z, half_w, front_y = -0.75, 1.9, 2.4, -2.6
+    y0, y1, z0, z1 = WINDOW
+    lx = LEFT_X
+    floor_z, ceil_z, right_x, front_y = -0.75, 1.9, 2.4, -2.6
     t = 0.08
     wall = principled('Plaster', '#EADFD0', 0.92)
-    wy = WALL_Y + t / 2
-    add_box('WallLeft', (x0 + half_w, t, ceil_z - floor_z), ((x0 - half_w) / 2, wy, (ceil_z + floor_z) / 2), wall)
-    add_box('WallRight', (half_w - x1, t, ceil_z - floor_z), ((x1 + half_w) / 2, wy, (ceil_z + floor_z) / 2), wall)
-    add_box('WallBelow', (x1 - x0, t, z0 - floor_z), ((x0 + x1) / 2, wy, (z0 + floor_z) / 2), wall)
-    add_box('WallAbove', (x1 - x0, t, ceil_z - z1), ((x0 + x1) / 2, wy, (z1 + ceil_z) / 2), wall)
-    add_box('SideL', (t, WALL_Y - front_y, ceil_z - floor_z), (-half_w, (WALL_Y + front_y) / 2, (ceil_z + floor_z) / 2), wall)
-    add_box('SideR', (t, WALL_Y - front_y, ceil_z - floor_z), (half_w, (WALL_Y + front_y) / 2, (ceil_z + floor_z) / 2), wall)
-    add_box('Front', (2 * half_w, t, ceil_z - floor_z), (0, front_y, (ceil_z + floor_z) / 2), wall)
-    add_box('Ceiling', (2 * half_w, WALL_Y - front_y, t), (0, (WALL_Y + front_y) / 2, ceil_z), wall)
-    add_box('Floor', (2 * half_w, WALL_Y - front_y, t), (0, (WALL_Y + front_y) / 2, floor_z),
+    width = right_x - lx
+    cx, cz, h_room = (lx + right_x) / 2, (ceil_z + floor_z) / 2, ceil_z - floor_z
+    add_box('BackWall', (width, t, h_room), (cx, WALL_Y + t / 2, cz), wall)
+    add_box('SideR', (t, WALL_Y - front_y, h_room), (right_x, (WALL_Y + front_y) / 2, cz), wall)
+    add_box('Front', (width, t, h_room), (cx, front_y, cz), wall)
+    add_box('Ceiling', (width, WALL_Y - front_y, t), (cx, (WALL_Y + front_y) / 2, ceil_z), wall)
+    add_box('Floor', (width, WALL_Y - front_y, t), (cx, (WALL_Y + front_y) / 2, floor_z),
             principled('Floor', '#8A6A50', 0.6))
+    # Left wall with the window opening.
+    wx = lx - t / 2
+    add_box('LeftFront', (t, y0 - front_y, h_room), (wx, (y0 + front_y) / 2, cz), wall)
+    add_box('LeftBack', (t, WALL_Y - y1, h_room), (wx, (WALL_Y + y1) / 2, cz), wall)
+    add_box('LeftBelow', (t, y1 - y0, z0 - floor_z), (wx, (y0 + y1) / 2, (z0 + floor_z) / 2), wall)
+    add_box('LeftAbove', (t, y1 - y0, ceil_z - z1), (wx, (y0 + y1) / 2, (z1 + ceil_z) / 2), wall)
 
-    # Window frame, sill and horizontal blinds (real slats so sunlight comes through in stripes).
+    # Window frame and horizontal blinds (real slats so sunlight comes through in stripes).
     frame = principled('Frame', '#F2ECE2', 0.5)
     fw = 0.035
-    add_box('FrameL', (fw, t + 0.01, z1 - z0), (x0 + fw / 2, wy, (z0 + z1) / 2), frame)
-    add_box('FrameR', (fw, t + 0.01, z1 - z0), (x1 - fw / 2, wy, (z0 + z1) / 2), frame)
-    add_box('FrameT', (x1 - x0, t + 0.01, fw), ((x0 + x1) / 2, wy, z1 - fw / 2), frame)
-    add_box('FrameM', (fw * 0.7, t, z1 - z0), ((x0 + x1) / 2, wy, (z0 + z1) / 2), frame)
+    add_box('FrameF', (t + 0.01, fw, z1 - z0), (wx, y0 + fw / 2, (z0 + z1) / 2), frame)
+    add_box('FrameB', (t + 0.01, fw, z1 - z0), (wx, y1 - fw / 2, (z0 + z1) / 2), frame)
+    add_box('FrameT', (t + 0.01, y1 - y0, fw), (wx, (y0 + y1) / 2, z1 - fw / 2), frame)
     slat_mat = principled('Blinds', '#D9BE98', 0.55)
     pitch, depth = 0.026, 0.03
-    # Tilt the slats so they block about half of the sun (crisp light/shadow
-    # stripes) while looking almost closed from the low camera.
-    slope = math.atan2(sun_dir.z, abs(sun_dir.y))
+    # Tilt the slats so they block about half of the sun: crisp light/shadow stripes.
+    slope = math.atan2(sun_dir.z, abs(sun_dir.x))
     tilt = slope + math.asin(min(1.0, 0.5 * pitch / depth))
     n = int((z1 - z0 - 0.04) / pitch)
     for i in range(n):
-        add_box(f'Slat{i:02d}', (x1 - x0 - 2 * fw, depth, 0.0015),
-                ((x0 + x1) / 2, WALL_Y - 0.03, z1 - 0.03 - i * pitch), slat_mat,
-                rotation=(tilt, 0, 0))
-    # Head rail.
-    add_box('BlindRail', (x1 - x0, 0.045, 0.03), ((x0 + x1) / 2, WALL_Y - 0.03, z1 - 0.005), slat_mat)
+        add_box(f'Slat{i:02d}', (depth, y1 - y0 - 2 * fw, 0.0015),
+                (lx + 0.03, (y0 + y1) / 2, z1 - 0.03 - i * pitch), slat_mat, rotation=(0, tilt, 0))
+    add_box('BlindRail', (0.045, y1 - y0, 0.03), (lx + 0.03, (y0 + y1) / 2, z1 - 0.005), slat_mat)
 
     # Faint haze so the sun beams through the blinds are visible.
     haze = new_material('Haze')
@@ -533,11 +535,11 @@ def build_room(wood, sun_dir):
     vol.inputs['Color'].default_value = hex_rgba('#FFF4E6')
     vol.inputs['Anisotropy'].default_value = 0.5
     nt.links.new(vol.outputs[0], nt.nodes['Material Output'].inputs['Volume'])
-    add_box('RoomHaze', (2 * half_w - 0.1, WALL_Y - front_y - 0.1, ceil_z - floor_z - 0.1),
-            (0, (WALL_Y + front_y) / 2, (ceil_z + floor_z) / 2), haze)
+    add_box('RoomHaze', (width - 0.1, WALL_Y - front_y - 0.1, h_room - 0.1),
+            (cx, (WALL_Y + front_y) / 2, cz), haze)
 
-    # Desk top against the window wall.
-    add_box('Desk', (2.6, WALL_Y + 0.7, 0.03), (0, (WALL_Y - 0.7) / 2, -0.015), wood, bevel=0.003)
+    # Desk top against the back wall, running up to the window wall.
+    add_box('Desk', (1.3 - lx, WALL_Y + 0.7, 0.03), ((lx + 1.3) / 2, (WALL_Y - 0.7) / 2, -0.015), wood, bevel=0.003)
 
 
 def build_wall_shelf(cache):
@@ -607,6 +609,10 @@ def build_desk_props(cache):
     root, meshes = import_asset(polyhaven_model('potted_plant_04', cache))
     place(root, meshes, stack + Vector((0, 0, z)), 0, height=0.13)
 
+    # Framed picture leaning against the back wall, left.
+    root, meshes = import_asset(polyhaven_model('standing_picture_frame_01', cache))
+    place(root, meshes, (-0.52, WALL_Y - 0.1, 0.0), 100, height=0.22)
+
     # Mug on a woven coaster, front-right.
     mug_at = Vector((0.18, 0.18, 0.0))
     add_cylinder('Coaster', 0.055, 0.005, mug_at + Vector((0, 0, 0.0025)), principled('Coaster', '#C8A77A', 0.9))
@@ -631,29 +637,30 @@ def build_desk(args):
     """Cozy desk by a window in warm morning sun through the blinds."""
     h = args.height
     bounds, figure = import_figure(args.model, h, args.yaw, 0.0)
-    x0, x1, z0, z1 = WINDOW
-    # Sun comes in through the left part of the window and lands on the figure.
-    through = (Vector((x0 + 0.3 * (x1 - x0), WALL_Y, 0.7)) - Vector((0, 0, h * 0.6))).normalized()
+    y0, y1, z0, z1 = WINDOW
+    # Sun comes in from the front-left through the window and lands on the figure.
+    through = (Vector((LEFT_X, -0.3, 0.62)) - Vector((0, 0, h * 0.6))).normalized()
     build_room(textured_material('DeskWood', polyhaven_texture(DESK_WOOD, args.cache), 0.6), through)
     build_wall_shelf(args.cache)
     build_desk_props(args.cache)
 
-    # Outside: autumn trees seen (blurred) through the window, plus a low golden sun.
+    # Outside sky through the (off-screen) window, plus a low golden sun.
     set_world_hdri(polyhaven_hdri(DESK_OUTSIDE, args.cache), 1.2, math.radians(200))
     sun_data = bpy.data.lights.new('Sun', 'SUN')
-    sun_data.energy = 12.0
+    sun_data.energy = 16.0
     sun_data.color = (1.0, 0.72, 0.42)
     sun_data.angle = math.radians(0.8)
     sun = bpy.data.objects.new('Sun', sun_data)
     bpy.context.collection.objects.link(sun)
     sun.rotation_euler = through.to_track_quat('Z', 'Y').to_euler()
     # Window portal so the sky light entering the room converges quickly.
-    portal = add_area_light('WindowPortal', ((x0 + x1) / 2, WALL_Y - 0.06, (z0 + z1) / 2),
-                            ((x0 + x1) / 2, WALL_Y - 2, (z0 + z1) / 2), x1 - x0, 1, size_y=z1 - z0)
+    portal = add_area_light('WindowPortal', (LEFT_X + 0.06, (y0 + y1) / 2, (z0 + z1) / 2),
+                            (LEFT_X + 2, (y0 + y1) / 2, (z0 + z1) / 2), y1 - y0, 1, size_y=z1 - z0)
     portal.data.cycles.is_portal = True
     # Warm bounce from the room behind the camera.
-    add_area_light('RoomBounce', (0.4, -1.4, 0.6), (0, 0, h * 0.5), 1.5, 18, color=(1.0, 0.85, 0.7))
+    add_area_light('RoomBounce', (0.4, -1.4, 0.6), (0, 0, h * 0.5), 1.5, 24, color=(1.0, 0.85, 0.7))
 
+    bpy.context.scene.view_settings.exposure = 0.3
     add_camera(bounds, figure, args, args.angle if args.angle is not None else 10, 7, lens=35,
                fstop=args.fstop or 8, fill=0.8, aim=0.5)
 
