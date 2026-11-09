@@ -41,6 +41,7 @@ from mathutils import Vector
 
 FIGURE_HEIGHT = 0.15  # metres
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
+TEXTURES = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'textures')
 
 
 # --------------------------------------------------------------------------
@@ -878,6 +879,35 @@ def emission_material(name, color, strength):
     return mat
 
 
+def image_emission_material(name, path, strength, alpha_from_luma=False):
+    """Emissive picture (window views, flames). With alpha_from_luma, black is transparent."""
+    mat = new_material(name)
+    nt = mat.node_tree
+    out = nt.nodes['Material Output']
+    nt.nodes.remove(nt.nodes['Principled BSDF'])
+    tex = nt.nodes.new('ShaderNodeTexImage')
+    tex.image = bpy.data.images.load(path, check_existing=True)
+    em = nt.nodes.new('ShaderNodeEmission')
+    em.inputs['Strength'].default_value = strength
+    nt.links.new(tex.outputs['Color'], em.inputs['Color'])
+    if not alpha_from_luma:
+        nt.links.new(em.outputs[0], out.inputs['Surface'])
+        return mat
+    luma = nt.nodes.new('ShaderNodeRGBToBW')
+    ramp = nt.nodes.new('ShaderNodeMapRange')
+    ramp.inputs['From Min'].default_value = 0.04
+    ramp.inputs['From Max'].default_value = 0.35
+    clear = nt.nodes.new('ShaderNodeBsdfTransparent')
+    mix = nt.nodes.new('ShaderNodeMixShader')
+    nt.links.new(tex.outputs['Color'], luma.inputs['Color'])
+    nt.links.new(luma.outputs['Val'], ramp.inputs['Value'])
+    nt.links.new(ramp.outputs['Result'], mix.inputs['Fac'])
+    nt.links.new(clear.outputs[0], mix.inputs[1])
+    nt.links.new(em.outputs[0], mix.inputs[2])
+    nt.links.new(mix.outputs[0], out.inputs['Surface'])
+    return mat
+
+
 def add_point_light(name, location, power, color, radius=0.02):
     data = bpy.data.lights.new(name, 'POINT')
     data.energy = power
@@ -965,7 +995,7 @@ def add_pine_cone(name, location, yaw_deg, length=0.07, radius=0.024):
 # Scene: records
 # --------------------------------------------------------------------------
 
-def add_turntable(at, yaw_deg, scale=1.0):
+def add_turntable(at, yaw_deg, scale=1.0, height_scale=1.0):
     at = Vector(at)
     walnut = principled('Plinth', '#5A3521', 0.35, **{'Coat Weight': 0.6, 'Coat Roughness': 0.1})
     alu = principled('Aluminium', '#C0C2C4', 0.25, Metallic=1.0)
@@ -1001,7 +1031,7 @@ def add_turntable(at, yaw_deg, scale=1.0):
     for p in parts:
         p.parent = root
     root.rotation_euler = (0, 0, math.radians(yaw_deg))
-    root.scale = (scale,) * 3
+    root.scale = (scale, scale, scale * height_scale)
     root.location = at
 
 
@@ -1068,7 +1098,7 @@ def build_records(args):
     add_box('Floor', (5.0, 5.0, 0.04), (0, 0.5, floor_z), principled('LoungeFloor', '#4D3627', 0.55))
 
     # Compact record player on the left: small enough that the record reads at figure scale.
-    add_turntable((-0.3, 0.2, 0.0), 16, scale=0.7)
+    add_turntable((-0.3, 0.2, 0.0), 16, scale=0.7, height_scale=0.5)
     # A neat stack of plain sleeves on the right.
     for i, color in enumerate(['#D8C7A8', '#E9DFCC', '#C4A57E', '#EFE8DA']):
         add_box(f'Sleeve{i}', (0.31, 0.31, 0.0045), (0.29 + 0.004 * i, 0.16 - 0.003 * i, 0.00225 + i * 0.0046),
@@ -1077,8 +1107,8 @@ def build_records(args):
     root, meshes = import_asset(polyhaven_model('potted_plant_02', cache))
     place(root, meshes, (-0.6, 0.55, floor_z), 40, height=1.0)
 
-    add_record_shelf((0.12, 1.2, floor_z + 0.55))
-    add_floor_lamp(Vector((-0.42, 1.1, floor_z)), top=0.3)
+    add_record_shelf((0.12, 1.2, floor_z), rows=4)
+    add_floor_lamp(Vector((-1.4, 0.9, floor_z)), top=0.5)  # off-screen: only its warm light shows
 
     # Warm evening light: the floor lamp, a warm key from the front-left, dim room fill.
     add_area_light('LampKey', (-0.7, -0.5, 0.45), (0, 0, h * 0.6), 0.8, 24, color=(1.0, 0.78, 0.55))
@@ -1123,14 +1153,17 @@ def add_fireplace(at, floor_z, cache):
                                             rotation=(0, math.radians(90), math.radians(rot)))
         assign(bpy.context.active_object, bark)
     add_box('Embers', (0.36, 0.14, 0.015), at + Vector((0, 0.03, hearth_top + 0.012)), ember)
-    # Flames: several tongues of different heights, a hot core in each.
-    flame = emission_material('Flame', (1.0, 0.28, 0.04, 1.0), 2.2)
-    core = emission_material('FlameCore', (1.0, 0.5, 0.14, 1.0), 3.5)
-    tongues = ((-0.17, 0.12), (-0.1, 0.2), (-0.03, 0.26), (0.04, 0.22), (0.11, 0.17), (0.17, 0.1), (0.0, 0.14))
-    for i, (x, hgt) in enumerate(tongues):
-        base = at + Vector((x, 0.02 + 0.01 * (i % 2), hearth_top + 0.11))
-        add_blob(f'Flame{i}', base + Vector((0, 0, hgt / 2)), (0.03, 0.022, hgt / 2), flame)
-        add_blob(f'FlameCore{i}', base + Vector((0, -0.01, hgt / 4)), (0.016, 0.014, hgt / 4), core)
+    # Flames: a photo of real flames (black background) on a few staggered cards;
+    # brightness drives both the glow and the transparency.
+    flames = image_emission_material('Flames', os.path.join(TEXTURES, 'fireplace_flames.jpg'), 3.0, alpha_from_luma=True)
+    for i, (x, y, yaw, wd) in enumerate(((-0.12, 0.06, 18, 0.3), (0.1, 0.07, -15, 0.3), (0.0, 0.0, 0, 0.36))):
+        bpy.ops.mesh.primitive_plane_add(size=1, location=at + Vector((x, y, hearth_top + 0.02 + wd * 0.75)),
+                                         rotation=(math.radians(90), 0, math.radians(yaw)))
+        card = bpy.context.active_object
+        card.name = f'FlameCard{i}'
+        card.scale = (wd, wd * 1.5, 1)
+        card.visible_shadow = False
+        assign(card, flames)
     add_point_light('FireLight', at + Vector((0, -0.05, hearth_top + 0.15)), 35, (1.0, 0.5, 0.18), radius=0.12)
 
     # Garland with warm fairy lights along the mantel edge, a pillar candle at each end.
@@ -1153,7 +1186,7 @@ def add_fireplace(at, floor_z, cache):
 
 
 def add_snowy_window(centre, size):
-    """Window frame with a soft snowy view: sky gradient, snow and dark fir silhouettes."""
+    """Window frame looking out on a snowy evening (generated photo on a plane behind the glass)."""
     c = Vector(centre)
     w, hgt = size
     frame = principled('WinFrame', '#F0E9DE', 0.5)
@@ -1163,15 +1196,17 @@ def add_snowy_window(centre, size):
     add_box('WinFrameB', (w + 0.08, 0.12, 0.04), c + Vector((0, -0.03, -hgt / 2)), frame)
     add_box('WinMullion', (0.025, 0.05, hgt), c, frame)
     add_box('WinTransom', (w, 0.05, 0.025), c + Vector((0, 0, hgt * 0.12)), frame)
-    sky = emission_material('SnowSky', '#9DB0C6', 0.9)
-    add_box('WinSky', (w + 1.0, 0.01, hgt + 0.6), c + Vector((0, 0.5, 0.15)), sky)
-    snow = emission_material('SnowGround', '#DCE4EC', 0.8)
-    add_box('WinSnow', (w + 1.0, 0.4, 0.02), c + Vector((0, 0.3, -hgt / 2 - 0.05)), snow)
-    fir = principled('FirSilhouette', '#1F2A26', 0.9)
-    for i, (x, s) in enumerate(((-0.25, 0.5), (0.05, 0.7), (0.3, 0.45))):
-        bpy.ops.mesh.primitive_cone_add(radius1=0.12 * s, depth=0.55 * s,
-                                        location=c + Vector((x, 0.35, -hgt / 2 + 0.275 * s)))
-        assign(bpy.context.active_object, fir)
+    view = image_emission_material('SnowView', os.path.join(TEXTURES, 'snowy_window_view.jpg'), 1.1)
+    bpy.ops.mesh.primitive_plane_add(size=1, location=c + Vector((0, 0.25, 0.05)), rotation=(math.radians(90), 0, 0))
+    plane = bpy.context.active_object
+    plane.name = 'WinView'
+    plane.scale = (w + 0.5, (w + 0.5) * 2 / 3, 1)
+    plane.visible_shadow = False
+    assign(plane, view)
+
+
+SOFA_AT = (1.35, 1.4, -0.45)
+SOFA_YAW = -25
 
 
 def build_fireplace(args):
@@ -1183,7 +1218,7 @@ def build_fireplace(args):
     wood = textured_material('TableWood', polyhaven_texture('wood_table_001', cache), 0.8)
     add_box('Table', (1.6, 0.8, 0.05), (0, 0.15, -0.025), wood, bevel=0.005)
     cabin = principled('CabinWall', '#C2A486', 0.9)
-    win_c, win_w, win_h = Vector((0.22, 1.8, floor_z + 0.95)), 0.62, 0.8
+    win_c, win_w, win_h = Vector((0.12, 1.8, floor_z + 0.95)), 0.62, 0.8
     wx0, wx1, wz0, wz1 = win_c.x - win_w / 2, win_c.x + win_w / 2, win_c.z - win_h / 2, win_c.z + win_h / 2
     add_box('BackWallL', (wx0 + 2.5, 0.06, 3.0), ((wx0 - 2.5) / 2, 1.8, 1.0), cabin)
     add_box('BackWallR', (2.5 - wx1, 0.06, 3.0), ((wx1 + 2.5) / 2, 1.8, 1.0), cabin)
@@ -1196,23 +1231,18 @@ def build_fireplace(args):
     add_snowy_window((win_c.x, 1.78, win_c.z), (win_w, win_h))
 
     # Sofa with cushions and a plaid throw over the arm, warm table lamp beside it.
-    root, meshes = import_asset(polyhaven_model('sofa_02', cache))
-    s_lo, s_hi = place(root, meshes, (0.75, 1.25, floor_z), -112)
-    fabric = principled('SofaFabric', '#CDB79C', 0.9, **{'Sheen Weight': 0.5})
-    for m in meshes:
-        for slot in m.material_slots:
-            slot.material = fabric
-    root, meshes = import_asset(polyhaven_model('throw_pillows_01', cache))
-    place(root, meshes, (0.6, 1.27, s_lo.z + 0.42), -112, height=0.32)
-    add_box('Throw', (0.42, 0.55, 0.025), (0.4, 1.12, floor_z + 0.5),
-            stripe_material('Plaid', ['#7A2420', '#2E3B2C', '#D9C9A8'], 12), bevel=0.01,
-            rotation=(math.radians(8), math.radians(-35), math.radians(-20)))
+    root, meshes = import_asset(polyhaven_model('sofa_03', cache))
+    s_lo, s_hi = place(root, meshes, SOFA_AT, SOFA_YAW)
+    # Plaid throw draped over the near arm.
+    add_box('Throw', (0.3, 0.45, 0.02), (s_lo.x + 0.12, (s_lo.y + s_hi.y) / 2 - 0.1, s_hi.z - 0.22),
+            stripe_material('Plaid', ['#7A2420', '#2E3B2C', '#D9C9A8'], 12), bevel=0.008,
+            rotation=(math.radians(10), math.radians(-60), math.radians(SOFA_YAW)))
     add_floor_lamp(Vector((0.75, 1.62, floor_z)), top=0.62)
 
     # Props: candle in a glass holder, two pine cones and a fir sprig.
     holder_at = Vector((-0.17, 0.16, 0.0))
     lo, hi = place(*import_asset(simready_asset('decor_candle_a01', cache)), holder_at, 0, 0.42)
-    glass = principled('HolderGlass', '#F4EFE8', 0.02, **{'Transmission Weight': 1.0, 'IOR': 1.45})
+    glass = principled('HolderGlass', '#D9B07A', 0.08, **{'Transmission Weight': 1.0, 'IOR': 1.45})
     holder = add_cylinder('Holder', 0.045, 0.08, holder_at + Vector((0, 0, 0.04)), glass, bevel=0.003)
     bm = bmesh.new()
     bm.from_mesh(holder.data)
@@ -1223,8 +1253,8 @@ def build_fireplace(args):
     solid.thickness = 0.003
     holder.modifiers.move(len(holder.modifiers) - 1, 0)
     flame_at = Vector(((lo.x + hi.x) / 2, (lo.y + hi.y) / 2, hi.z + 0.01))
-    add_blob('CandleFlame', flame_at, (0.004, 0.004, 0.011), emission_material('CandleFlame', '#FFB25C', 40))
-    add_point_light('CandleLight', flame_at + Vector((0, 0, 0.006)), 1.5, (1.0, 0.62, 0.3), radius=0.004)
+    add_blob('CandleFlame', flame_at, (0.004, 0.004, 0.011), emission_material('CandleFlame', '#FFB25C', 15))
+    add_point_light('CandleLight', flame_at + Vector((0, 0, 0.006)), 0.4, (1.0, 0.62, 0.3), radius=0.004)
     add_pine_cone('PineCone1', (-0.11, 0.05, 0.0), 35, length=0.055, radius=0.019)
     add_pine_cone('PineCone2', (0.14, 0.12, 0.0), -60, length=0.05, radius=0.017)
     root, meshes = import_asset(polyhaven_model('fir_sapling', cache))
