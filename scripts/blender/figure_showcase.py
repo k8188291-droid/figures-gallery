@@ -836,7 +836,7 @@ def build_cafe(args):
 
     # Front props: croissant on a plate and a latte on a saucer, left of the figure.
     ceramic = principled('PlateCeramic', '#F4F0E8', 0.2, **{'Coat Weight': 0.5})
-    plate_at = Vector((-0.25, 0.08, 0.0))
+    plate_at = Vector((-0.21, 0.08, 0.0))
     add_cylinder('Plate', 0.085, 0.012, plate_at + Vector((0, 0, 0.006)), ceramic, bevel=0.004)
     add_simready('food_prepared_croissant_a01', cache, plate_at + Vector((0, 0, 0.012)), 100, 0.85)
     cup_at = Vector((-0.35, 0.26, 0.0))
