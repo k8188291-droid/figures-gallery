@@ -12,6 +12,11 @@ Scenes:
           stacked books with a plant, mug, wall shelf and lamp; light haze.
   cafe    Wooden café counter: croissant and latte beside the figure, espresso
           machine, grinder, jars, mugs and pendant lamps softly blurred behind.
+  records Music corner: walnut sideboard with a turntable and plain record
+          sleeves; floor lamp and a record shelf behind, warm evening light.
+  fireplace
+          Winter evening: candle and pine cones on a wooden table, stone
+          fireplace glowing behind, sofa and a snowy window.
 
 Focus is placed by ray casting onto the figure's face, so the figure is
 always sharp.
@@ -46,7 +51,7 @@ def parse_args():
     argv = sys.argv[sys.argv.index('--') + 1:] if '--' in sys.argv else []
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument('--model', required=True, help='GLB/GLTF file to showcase')
-    p.add_argument('--scene', choices=['studio', 'desk', 'cafe'], default='studio')
+    p.add_argument('--scene', choices=['studio', 'desk', 'cafe', 'records', 'fireplace'], default='studio')
     p.add_argument('--out', required=True, help='Output image path (.png/.jpg)')
     p.add_argument('--yaw', type=float, default=0.0,
                    help='Extra rotation (deg, around Z) so the figure faces the camera. '
@@ -851,6 +856,311 @@ def build_cafe(args):
 
 
 # --------------------------------------------------------------------------
+# Shared small helpers for the living-room scenes
+# --------------------------------------------------------------------------
+
+def emission_material(name, color, strength):
+    mat = new_material(name)
+    nt = mat.node_tree
+    nt.nodes.remove(nt.nodes['Principled BSDF'])
+    em = nt.nodes.new('ShaderNodeEmission')
+    em.inputs['Color'].default_value = hex_rgba(color) if isinstance(color, str) else color
+    em.inputs['Strength'].default_value = strength
+    nt.links.new(em.outputs[0], nt.nodes['Material Output'].inputs['Surface'])
+    return mat
+
+
+def add_point_light(name, location, power, color, radius=0.02):
+    data = bpy.data.lights.new(name, 'POINT')
+    data.energy = power
+    data.color = color
+    data.shadow_soft_size = radius
+    obj = bpy.data.objects.new(name, data)
+    bpy.context.collection.objects.link(obj)
+    obj.location = location
+    return obj
+
+
+def add_blob(name, location, scale, mat, subdiv=2):
+    bpy.ops.mesh.primitive_ico_sphere_add(subdivisions=subdiv, radius=1, location=location)
+    obj = bpy.context.active_object
+    obj.name = name
+    obj.scale = scale
+    bpy.ops.object.shade_smooth()
+    assign(obj, mat)
+    return obj
+
+
+def stripe_material(name, colors, scale=8.0):
+    """Woven plaid / stripes for blankets and sleeves."""
+    mat = principled(name, colors[0], 0.85, **{'Sheen Weight': 0.4})
+    nt = mat.node_tree
+    coord = nt.nodes.new('ShaderNodeTexCoord')
+    sep = nt.nodes.new('ShaderNodeSeparateXYZ')
+    nt.links.new(coord.outputs['Object'], sep.inputs[0])
+    waves = []
+    for axis in ('X', 'Y'):
+        wave = nt.nodes.new('ShaderNodeTexWave')
+        wave.wave_profile = 'SAW'
+        wave.inputs['Scale'].default_value = scale
+        mul = nt.nodes.new('ShaderNodeMath')
+        mul.operation = 'MULTIPLY'
+        mul.inputs[1].default_value = 1.0
+        nt.links.new(sep.outputs[axis], wave.inputs['Vector'])
+        waves.append(wave)
+    mix = nt.nodes.new('ShaderNodeMix')
+    mix.data_type = 'FLOAT'
+    mix.inputs['Factor'].default_value = 0.5
+    nt.links.new(waves[0].outputs['Fac'], mix.inputs['A'])
+    nt.links.new(waves[1].outputs['Fac'], mix.inputs['B'])
+    ramp = nt.nodes.new('ShaderNodeValToRGB')
+    ramp.color_ramp.interpolation = 'CONSTANT'
+    ramp.color_ramp.elements[0].color = hex_rgba(colors[0])
+    ramp.color_ramp.elements[1].position = 0.55
+    ramp.color_ramp.elements[1].color = hex_rgba(colors[1])
+    if len(colors) > 2:
+        el = ramp.color_ramp.elements.new(0.8)
+        el.color = hex_rgba(colors[2])
+    nt.links.new(mix.outputs['Result'], ramp.inputs['Fac'])
+    nt.links.new(ramp.outputs['Color'], nt.nodes['Principled BSDF'].inputs['Base Color'])
+    return mat
+
+
+def add_pine_cone(name, location, yaw_deg, length=0.07, radius=0.024):
+    """Pine cone from spiralling scales, lying on its side."""
+    root = bpy.data.objects.new(name, None)
+    bpy.context.collection.objects.link(root)
+    scale_mat = principled(f'{name}Scale', '#6E4428', 0.7)
+    tip_mat = principled(f'{name}Tip', '#A27247', 0.7)
+    count = 140
+    for i in range(count):
+        t = i / (count - 1)
+        r = radius * (math.sin(math.pi * min(1.0, 0.15 + t * 0.95)) ** 0.7)
+        a = i * math.radians(137.5)
+        z = t * length
+        size = 0.4 + 0.6 * r / radius
+        bpy.ops.mesh.primitive_uv_sphere_add(segments=12, ring_count=6, radius=1,
+                                             location=(math.cos(a) * r, math.sin(a) * r, z))
+        sc = bpy.context.active_object
+        sc.scale = (0.008 * size, 0.0065 * size, 0.0016 * size)
+        sc.rotation_euler = (0, math.radians(-40), a)
+        assign(sc, scale_mat if i % 3 else tip_mat)
+        bpy.ops.object.shade_smooth()
+        sc.parent = root
+    add_cylinder(f'{name}Core', radius * 0.35, length, (0, 0, length / 2), scale_mat).parent = root
+    root.rotation_euler = (math.radians(90), 0, math.radians(yaw_deg))
+    root.location = Vector(location) + Vector((0, 0, radius * 0.85))
+    return root
+
+
+# --------------------------------------------------------------------------
+# Scene: records
+# --------------------------------------------------------------------------
+
+def add_turntable(at, yaw_deg):
+    at = Vector(at)
+    walnut = principled('Plinth', '#5A3521', 0.35, **{'Coat Weight': 0.6, 'Coat Roughness': 0.1})
+    alu = principled('Aluminium', '#C0C2C4', 0.25, Metallic=1.0)
+    root = bpy.data.objects.new('Turntable', None)
+    bpy.context.collection.objects.link(root)
+    parts = [
+        add_box('Plinth', (0.44, 0.35, 0.08), (0, 0, 0.045), walnut, bevel=0.006),
+        add_cylinder('Platter', 0.15, 0.012, (-0.04, 0, 0.091), alu, bevel=0.002),
+    ]
+    vinyl = principled('Vinyl', '#0B0B0C', 0.18, **{'Coat Weight': 1.0, 'Coat Roughness': 0.05})
+    nt = vinyl.node_tree
+    wave = nt.nodes.new('ShaderNodeTexWave')
+    wave.wave_type = 'RINGS'
+    wave.inputs['Scale'].default_value = 120
+    bump = nt.nodes.new('ShaderNodeBump')
+    bump.inputs['Strength'].default_value = 0.08
+    nt.links.new(wave.outputs['Fac'], bump.inputs['Height'])
+    nt.links.new(bump.outputs['Normal'], nt.nodes['Principled BSDF'].inputs['Coat Normal'])
+    parts.append(add_cylinder('Record', 0.15, 0.002, (-0.04, 0, 0.098), vinyl))
+    parts.append(add_cylinder('Label', 0.048, 0.0025, (-0.04, 0, 0.099), principled('Label', '#B5532F', 0.6)))
+    parts.append(add_cylinder('Spindle', 0.004, 0.02, (-0.04, 0, 0.105), alu))
+    parts.append(add_cylinder('ArmBase', 0.022, 0.03, (0.16, 0.11, 0.1), alu, bevel=0.002))
+    bpy.ops.mesh.primitive_cylinder_add(radius=0.004, depth=0.23, location=(0.12, 0.0, 0.118),
+                                        rotation=(math.radians(90), 0, math.radians(-20)))
+    arm = bpy.context.active_object
+    assign(arm, alu)
+    parts.append(arm)
+    parts.append(add_box('Headshell', (0.02, 0.035, 0.008), (0.08, -0.105, 0.112), principled('Headshell', '#1B1B1B', 0.4),
+                         rotation=(0, 0, math.radians(-20))))
+    for x in (-0.19, 0.19):
+        for y in (-0.15, 0.15):
+            parts.append(add_cylinder('Foot', 0.02, 0.01, (x, y, 0.005), principled('Foot', '#222222', 0.6)))
+    for p in parts:
+        p.parent = root
+    root.rotation_euler = (0, 0, math.radians(yaw_deg))
+    root.location = at
+
+
+def add_record_shelf(origin, cols=3, rows=2, cell=0.36):
+    """Cube shelf full of record spines (plain colours, no text)."""
+    origin = Vector(origin)
+    wood = principled('RecordShelf', '#4E3324', 0.5)
+    t, depth = 0.025, 0.34
+    width, height = cols * cell + t, rows * cell + t
+    for r in range(rows + 1):
+        add_box(f'ShelfH{r}', (width, depth, t), origin + Vector((width / 2, 0, r * cell + t / 2)), wood)
+    for c in range(cols + 1):
+        add_box(f'ShelfV{c}', (t, depth, height), origin + Vector((c * cell + t / 2, 0, height / 2)), wood)
+    add_box('ShelfBack', (width, 0.01, height), origin + Vector((width / 2, depth / 2, height / 2)), wood)
+    palette = ['#2F2A26', '#8A3B2E', '#D9CDB8', '#3E5161', '#B98A4E', '#5C6B4A', '#1E1E1E', '#C9B79A', '#6B4B6E']
+    k = 0
+    for r in range(rows):
+        for c in range(cols):
+            x = origin.x + c * cell + t + 0.006
+            end = origin.x + (c + 1) * cell - 0.02
+            while x < end:
+                th = 0.004 + 0.003 * ((k * 7) % 3)
+                lean = 0.0 if x < end - 0.05 else math.radians(6)
+                add_box(f'LP{k}', (th, 0.31, 0.31), (x + th / 2, origin.y - 0.005, origin.z + r * cell + t + 0.155),
+                        principled(f'LP{k}', palette[(k * 5) % len(palette)], 0.55), rotation=(0, lean, 0))
+                x += th + 0.0008
+                k += 1
+
+
+def add_floor_lamp(at, top=0.62):
+    at = Vector(at)
+    wood = principled('LampWood', '#8B5E3C', 0.5)
+    for i in range(3):
+        a = math.radians(90 + i * 120)
+        foot = at + Vector((math.cos(a) * 0.22, math.sin(a) * 0.22, at.z))
+        head = Vector((at.x, at.y, top - 0.12))
+        mid = (foot + head) / 2
+        d = head - foot
+        bpy.ops.mesh.primitive_cylinder_add(radius=0.012, depth=d.length, location=mid)
+        leg = bpy.context.active_object
+        leg.rotation_euler = d.to_track_quat('Z', 'Y').to_euler()
+        assign(leg, wood)
+    shade = principled('LampShade', '#F3E3C6', 0.9, **{'Transmission Weight': 0.0, 'Subsurface Weight': 0.6})
+    bpy.ops.mesh.primitive_cone_add(radius1=0.24, radius2=0.19, depth=0.28, location=(at.x, at.y, top),
+                                    vertices=64, end_fill_type='NOTHING')
+    cone = bpy.context.active_object
+    solid = cone.modifiers.new('Solidify', 'SOLIDIFY')
+    solid.thickness = 0.004
+    assign(cone, shade)
+    bpy.ops.object.shade_smooth()
+    add_point_light('LampBulb', (at.x, at.y, top - 0.02), 40, (1.0, 0.72, 0.45), radius=0.05)
+
+
+def build_records(args):
+    """Music corner: figure on a walnut sideboard between a turntable and record sleeves."""
+    h = args.height
+    cache = args.cache
+    bounds, figure = import_figure(args.model, h, args.yaw, 0.0)
+    floor_z = -0.75
+    top = textured_material('SideboardWood', polyhaven_texture('walnut_veneer', cache), 0.7)
+    add_box('Sideboard', (2.0, 0.5, 0.04), (0, 0.05, -0.02), top, bevel=0.003)
+    add_box('SideboardBody', (1.96, 0.46, 0.7), (0, 0.05, -0.39), principled('SideboardBody', '#4A2E1E', 0.5))
+    add_box('BackWall', (5.0, 0.06, 3.0), (0, 1.7, 0.6), principled('LoungeWall', '#D6C2A6', 0.9))
+    add_box('Floor', (5.0, 5.0, 0.04), (0, 0.5, floor_z), principled('LoungeFloor', '#4D3627', 0.55))
+
+    add_turntable((-0.42, 0.3, 0.0), 28)
+    sleeve_colors = ['#E7DCC8', '#C9A982', '#F1ECE3', '#B28A64', '#DCCFB9']
+    for i, color in enumerate(sleeve_colors):
+        add_box(f'Sleeve{i}', (0.31, 0.31, 0.004), (0.26 + 0.006 * i, 0.16 - 0.004 * i, 0.002 + i * 0.0042),
+                principled(f'Sleeve{i}', color, 0.75), rotation=(0, 0, math.radians(-8 + 4 * i)))
+    root, meshes = import_asset(polyhaven_model('potted_plant_02', cache))
+    place(root, meshes, (-0.8, 0.22, 0.0), 20, height=0.45)
+
+    add_record_shelf((0.18, 1.45, floor_z + 0.55))
+    add_floor_lamp(Vector((-0.6, 1.35, floor_z)), top=0.55)
+
+    # Warm evening light: the floor lamp, a warm key from the front-left, dim room fill.
+    add_area_light('LampKey', (-0.7, -0.5, 0.45), (0, 0, h * 0.6), 0.8, 22, color=(1.0, 0.8, 0.6))
+    add_area_light('RoomFill', (0.7, -1.0, 0.3), (0, 0, h * 0.5), 1.2, 6, color=(1.0, 0.9, 0.8))
+    set_world_color((0.18, 0.13, 0.1), 0.5)
+
+    add_camera(bounds, figure, args, args.angle if args.angle is not None else 10, 7, lens=35,
+               fstop=args.fstop or 8, fill=0.8, aim=0.5)
+
+
+# --------------------------------------------------------------------------
+# Scene: fireplace
+# --------------------------------------------------------------------------
+
+def add_fireplace(at, floor_z):
+    """Stone fireplace with a raised hearth, logs and a glowing fire."""
+    at = Vector(at)
+    stone = principled('Stone', '#8C8178', 0.85)
+    noise = stone.node_tree.nodes.new('ShaderNodeTexVoronoi')
+    noise.inputs['Scale'].default_value = 9.0
+    ramp = stone.node_tree.nodes.new('ShaderNodeValToRGB')
+    ramp.color_ramp.elements[0].color = hex_rgba('#6E655E')
+    ramp.color_ramp.elements[1].color = hex_rgba('#A39789')
+    stone.node_tree.links.new(noise.outputs['Distance'], ramp.inputs['Fac'])
+    stone.node_tree.links.new(ramp.outputs['Color'], stone.node_tree.nodes['Principled BSDF'].inputs['Base Color'])
+    w, d = 1.3, 0.4
+    hearth_top = floor_z + 0.25
+    open_w, open_top = 0.7, hearth_top + 0.55
+    add_box('Hearth', (w + 0.2, d + 0.25, 0.25), at + Vector((0, -0.12, floor_z + 0.125)), stone)
+    add_box('FireL', ((w - open_w) / 2, d, 1.6), at + Vector((-(w + open_w) / 4, 0, hearth_top + 0.8)), stone)
+    add_box('FireR', ((w - open_w) / 2, d, 1.6), at + Vector(((w + open_w) / 4, 0, hearth_top + 0.8)), stone)
+    add_box('FireTop', (open_w, d, 1.6 - 0.55), at + Vector((0, 0, open_top + (1.6 - 0.55) / 2)), stone)
+    add_box('FireBack', (open_w, 0.05, 0.55), at + Vector((0, d / 2, hearth_top + 0.275)), principled('Soot', '#1A1512', 0.9))
+    add_box('Mantel', (w + 0.15, d + 0.12, 0.08), at + Vector((0, -0.04, open_top + 0.14)), principled('MantelWood', '#5C3B26', 0.5))
+    bark = principled('Bark', '#3D2A1E', 0.9)
+    for i, (x, rot) in enumerate(((-0.1, 15), (0.1, -10), (0.0, 80))):
+        bpy.ops.mesh.primitive_cylinder_add(radius=0.045, depth=0.42, location=at + Vector((x, 0.02, hearth_top + 0.05 + 0.05 * (i == 2))),
+                                            rotation=(0, math.radians(90), math.radians(rot)))
+        assign(bpy.context.active_object, bark)
+    flame = emission_material('Flame', (1.0, 0.32, 0.06, 1.0), 4)
+    core = emission_material('FlameCore', (1.0, 0.6, 0.2, 1.0), 7)
+    for i, (x, hgt) in enumerate(((-0.15, 0.16), (-0.05, 0.24), (0.06, 0.2), (0.16, 0.14))):
+        add_blob(f'Flame{i}', at + Vector((x, 0.02, hearth_top + 0.1 + hgt / 2)), (0.045, 0.03, hgt / 2), flame)
+        add_blob(f'FlameCore{i}', at + Vector((x, 0.0, hearth_top + 0.09 + hgt / 4)), (0.025, 0.02, hgt / 4), core)
+    add_point_light('FireLight', at + Vector((0, 0.05, hearth_top + 0.15)), 30, (1.0, 0.5, 0.18), radius=0.12)
+
+
+def build_fireplace(args):
+    """Winter evening: figure on a wooden table, candle and pine cones, fire glowing behind."""
+    h = args.height
+    cache = args.cache
+    bounds, figure = import_figure(args.model, h, args.yaw, 0.0)
+    floor_z = -0.45
+    wood = textured_material('TableWood', polyhaven_texture('wood_table_001', cache), 0.8)
+    add_box('Table', (1.6, 0.8, 0.05), (0, 0.15, -0.025), wood, bevel=0.005)
+    add_box('BackWall', (5.0, 0.06, 3.0), (0, 1.9, 1.0), principled('CabinWall', '#B89B7E', 0.9))
+    add_box('Floor', (5.0, 5.0, 0.04), (0, 0.5, floor_z), principled('CabinFloor', '#5A3E2B', 0.6))
+    add_box('Rug', (1.6, 1.2, 0.01), (0.2, 1.0, floor_z + 0.025), stripe_material('Rug', ['#8E2F28', '#E6D8C2', '#3D2A22'], 4))
+
+    add_fireplace((-0.8, 1.65, 0.0), floor_z)
+    # Garland lights on the mantel.
+    bulb = emission_material('FairyBulb', '#FFC57A', 30)
+    for i in range(9):
+        add_blob(f'Fairy{i}', (-1.4 + i * 0.15, 1.55, floor_z + 0.25 + 0.55 + 0.2), (0.008, 0.008, 0.008), bulb, 1)
+
+    # Sofa with a plaid throw on the right.
+    root, meshes = import_asset(polyhaven_model('sofa_02', cache))
+    place(root, meshes, (0.6, 1.55, floor_z), -110)
+    add_box('Throw', (0.5, 0.6, 0.03), (0.35, 1.45, floor_z + 0.5), stripe_material('Plaid', ['#7A2420', '#2E3B2C', '#D9C9A8'], 10),
+            rotation=(math.radians(10), math.radians(-25), 0))
+    # Snowy window, far right.
+    add_box('WindowFrame', (0.8, 0.05, 0.9), (0.45, 1.86, floor_z + 0.95), principled('WinFrame', '#4A3022', 0.5))
+    add_box('WindowView', (0.7, 0.02, 0.8), (0.45, 1.84, floor_z + 0.95), emission_material('SnowView', '#7F93AA', 0.5))
+
+    # Props: pillar candle with a flame, two pine cones.
+    lo, hi = place(*import_asset(simready_asset('decor_candle_a01', cache)), (-0.2, 0.22, 0.0), 0, 0.55)
+    add_blob('CandleFlame', ((lo.x + hi.x) / 2, (lo.y + hi.y) / 2, hi.z + 0.012), (0.005, 0.005, 0.013),
+             emission_material('CandleFlame', '#FFB25C', 40))
+    add_point_light('CandleLight', ((lo.x + hi.x) / 2, (lo.y + hi.y) / 2, hi.z + 0.02), 1.2, (1.0, 0.62, 0.3), radius=0.005)
+    add_pine_cone('PineCone1', (-0.12, 0.08, 0.0), 35, length=0.055, radius=0.019)
+    add_pine_cone('PineCone2', (0.13, 0.13, 0.0), -60, length=0.05, radius=0.017)
+
+    # Warm lamp key from the front-left, fire glow from behind-left, cool hint from the window.
+    add_area_light('LampKey', (-0.7, -0.6, 0.5), (0, 0, h * 0.6), 0.8, 18, color=(1.0, 0.8, 0.6))
+    add_area_light('RoomFill', (0.7, -1.0, 0.3), (0, 0, h * 0.5), 1.2, 5, color=(1.0, 0.9, 0.8))
+    set_world_color((0.15, 0.11, 0.09), 0.5)
+
+    bpy.context.scene.view_settings.exposure = 0.35
+    add_camera(bounds, figure, args, args.angle if args.angle is not None else 10, 7, lens=35,
+               fstop=args.fstop or 8, fill=0.8, aim=0.5)
+
+
+# --------------------------------------------------------------------------
 # Render setup
 # --------------------------------------------------------------------------
 
@@ -880,7 +1190,8 @@ def configure_render(args):
 def main():
     args = parse_args()
     bpy.ops.wm.read_factory_settings(use_empty=True)
-    {'studio': build_studio, 'desk': build_desk, 'cafe': build_cafe}[args.scene](args)
+    {'studio': build_studio, 'desk': build_desk, 'cafe': build_cafe,
+     'records': build_records, 'fireplace': build_fireplace}[args.scene](args)
     configure_render(args)
     cam = bpy.context.scene.camera
     print(f'[showcase] focus distance {cam.data.dof.focus_distance:.3f} m, f/{cam.data.dof.aperture_fstop}')
