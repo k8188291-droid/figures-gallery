@@ -1108,7 +1108,7 @@ def build_records(args):
     place(root, meshes, (-0.6, 0.55, floor_z), 40, height=1.0)
 
     add_record_shelf((0.12, 1.2, floor_z), rows=4)
-    add_floor_lamp(Vector((-1.4, 0.9, floor_z)), top=0.5)  # off-screen: only its warm light shows
+    add_floor_lamp(Vector((-0.5, 1.15, floor_z)), top=0.33)
 
     # Warm evening light: the floor lamp, a warm key from the front-left, dim room fill.
     add_area_light('LampKey', (-0.7, -0.5, 0.45), (0, 0, h * 0.6), 0.8, 24, color=(1.0, 0.78, 0.55))
@@ -1116,8 +1116,9 @@ def build_records(args):
     add_area_light('ShelfWash', (0.6, 0.4, 0.5), (0.5, 1.2, 0.1), 0.6, 10, color=(1.0, 0.8, 0.6))
     set_world_color((0.2, 0.14, 0.1), 0.5)
 
-    # Higher camera than the other scenes so the record on the player is visible.
-    add_camera(bounds, figure, args, args.angle if args.angle is not None else 10, 20, lens=35,
+    # Slightly higher camera than the other scenes so the record on the player shows,
+    # while the floor lamp's shade still fits in the frame.
+    add_camera(bounds, figure, args, args.angle if args.angle is not None else 10, 14, lens=35,
                fstop=args.fstop or 8, fill=0.8, aim=0.5)
 
 
@@ -1239,22 +1240,18 @@ def build_fireplace(args):
             rotation=(math.radians(10), math.radians(-60), math.radians(SOFA_YAW)))
     add_floor_lamp(Vector((0.75, 1.62, floor_z)), top=0.62)
 
-    # Props: candle in a glass holder, two pine cones and a fir sprig.
+    # Props: tealight in a fluted glass, two pine cones and a fir sprig.
     holder_at = Vector((-0.17, 0.16, 0.0))
-    lo, hi = place(*import_asset(simready_asset('decor_candle_a01', cache)), holder_at, 0, 0.42)
-    glass = principled('HolderGlass', '#D9B07A', 0.08, **{'Transmission Weight': 1.0, 'IOR': 1.45})
-    holder = add_cylinder('Holder', 0.045, 0.08, holder_at + Vector((0, 0, 0.04)), glass, bevel=0.003)
-    bm = bmesh.new()
-    bm.from_mesh(holder.data)
-    bmesh.ops.delete(bm, geom=[f for f in bm.faces if f.normal.z > 0.9], context='FACES')
-    bm.to_mesh(holder.data)
-    bm.free()
-    solid = holder.modifiers.new('Solidify', 'SOLIDIFY')
-    solid.thickness = 0.003
-    holder.modifiers.move(len(holder.modifiers) - 1, 0)
-    flame_at = Vector(((lo.x + hi.x) / 2, (lo.y + hi.y) / 2, hi.z + 0.01))
-    add_blob('CandleFlame', flame_at, (0.004, 0.004, 0.011), emission_material('CandleFlame', '#FFB25C', 15))
-    add_point_light('CandleLight', flame_at + Vector((0, 0, 0.006)), 0.4, (1.0, 0.62, 0.3), radius=0.004)
+    root, meshes = import_asset(simready_asset('dishware_glass_8oz_a01', cache))
+    g_lo, g_hi = place(root, meshes, holder_at, 0, height=0.085)
+    glass = principled('VotiveGlass', '#FFF7EC', 0.03, **{'Transmission Weight': 1.0, 'IOR': 1.5})
+    for m in meshes:
+        for slot in m.material_slots:
+            slot.material = glass
+    t_lo, t_hi = add_simready('lighting_candles_tea_a01', cache, holder_at + Vector((0, 0, 0.007)), 0, 0.9)
+    flame_at = Vector((holder_at.x, holder_at.y, t_hi.z + 0.011))
+    add_blob('CandleFlame', flame_at, (0.0035, 0.0035, 0.01), emission_material('CandleFlame', '#FFB25C', 12))
+    add_point_light('CandleLight', flame_at + Vector((0, 0, 0.004)), 0.25, (1.0, 0.62, 0.3), radius=0.003)
     add_pine_cone('PineCone1', (-0.11, 0.05, 0.0), 35, length=0.055, radius=0.019)
     add_pine_cone('PineCone2', (0.14, 0.12, 0.0), -60, length=0.05, radius=0.017)
     root, meshes = import_asset(polyhaven_model('fir_sapling', cache))
