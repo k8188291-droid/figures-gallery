@@ -1417,11 +1417,9 @@ def build_nordic(args):
     add_framed_picture('LineArt', (0.05, wall_y - 0.06, 0.0), (0.3, 0.4),
                        os.path.join(TEXTURES, 'line_drawing_bold.jpg'), principled('ArtFrame', '#C9A27C', 0.5), lean_deg=10)
 
-    # Desk set-up: white keyboard on the left, open notebook with a pen and a mug
-    # on the right, a white lamp and a succulent at the back right.
-    add_keyboard((-0.24, 0.3, 0.0), 8, principled('WhiteKbCase', '#E6E6E3', 0.4),
-                 principled('WhiteKey', '#F4F4F2', 0.45), principled('GreyKey', '#B9BCBF', 0.45))
-    add_mug('WhiteMug', (0.25, 0.34, 0.0), principled('WhiteCeramic', '#F7F7F5', 0.15, **{'Coat Weight': 0.8}))
+    # Desk set-up: white mug on the left, open notebook with a pen on the right,
+    # a white lamp and a succulent at the back right.
+    add_mug('WhiteMug', (-0.2, 0.2, 0.0), principled('WhiteCeramic', '#F7F7F5', 0.15, **{'Coat Weight': 0.8}))
     add_open_notebook((0.19, 0.16, 0.0), -24)
     add_simready('lamp_table_bedside_a01', cache, (0.3, 0.62, 0.0), 200, 0.9)
     root, meshes = import_asset(polyhaven_model('potted_plant_04', cache))
@@ -1447,6 +1445,8 @@ def build_nordic(args):
 
     add_camera(bounds, figure, args, args.angle if args.angle is not None else 10, 7, lens=35,
                fstop=args.fstop or 8, fill=0.8, aim=0.5)
+    # The scene is kept low-key so the white desk does not blow out; lift the figure only.
+    add_figure_fill(10)
 
 
 # --------------------------------------------------------------------------
