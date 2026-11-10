@@ -1446,7 +1446,7 @@ def build_nordic(args):
     add_camera(bounds, figure, args, args.angle if args.angle is not None else 10, 7, lens=35,
                fstop=args.fstop or 8, fill=0.8, aim=0.5)
     # The scene is kept low-key so the white desk does not blow out; lift the figure only.
-    add_figure_fill(10)
+    add_figure_fill(4)
 
 
 # --------------------------------------------------------------------------
