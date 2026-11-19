@@ -22,6 +22,10 @@ Scenes:
   nightcity
           Dark stone window sill at night: glass of water and a phone; a neon
           city skyline as bokeh behind the glass.
+  rooftop Night rooftop: concrete ledge with a railing, a small soda can, and a
+          neon skyline behind.
+  gaming  Dark gaming desk: RGB keyboard and mouse, a monitor with a neon city
+          wallpaper, a glowing PC tower and LED strips.
 
 Focus is placed by ray casting onto the figure's face, so the figure is
 always sharp.
@@ -57,7 +61,7 @@ def parse_args():
     argv = sys.argv[sys.argv.index('--') + 1:] if '--' in sys.argv else []
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument('--model', required=True, help='GLB/GLTF or .blend file to showcase')
-    p.add_argument('--scene', choices=['studio', 'desk', 'cafe', 'records', 'fireplace', 'nordic', 'nightcity'], default='studio')
+    p.add_argument('--scene', choices=['studio', 'desk', 'cafe', 'records', 'fireplace', 'nordic', 'nightcity', 'rooftop', 'gaming'], default='studio')
     p.add_argument('--out', required=True, help='Output image path (.png/.jpg)')
     p.add_argument('--yaw', type=float, default=0.0,
                    help='Extra rotation (deg, around Z) so the figure faces the camera. '
@@ -1524,6 +1528,128 @@ def build_nightcity(args):
 
 
 # --------------------------------------------------------------------------
+# Scene: rooftop
+# --------------------------------------------------------------------------
+
+def add_soda_can(name, at, body_color, height=0.062, radius=0.017):
+    """Plain aluminium can (no label text), a small one so it suits figure scale."""
+    at = Vector(at)
+    body = principled(f'{name}Body', body_color, 0.25, Metallic=0.85, **{'Coat Weight': 0.6, 'Coat Roughness': 0.08})
+    alu = principled(f'{name}Alu', '#C9CBCE', 0.25, Metallic=1.0)
+    add_cylinder(f'{name}Body', radius, height * 0.86, at + Vector((0, 0, height * 0.07 + height * 0.43)), body, bevel=0.002)
+    add_cylinder(f'{name}Bottom', radius * 0.92, height * 0.07, at + Vector((0, 0, height * 0.035)), alu, bevel=0.0015)
+    add_cylinder(f'{name}Top', radius * 0.88, height * 0.07, at + Vector((0, 0, height * 0.965)), alu, bevel=0.0015)
+    add_box(f'{name}Tab', (radius * 0.5, radius * 0.9, 0.0008), at + Vector((0, radius * 0.15, height + 0.0006)), alu)
+
+
+def build_rooftop(args):
+    """Night rooftop: concrete ledge with a railing, neon skyline behind."""
+    h = args.height
+    cache = args.cache
+    bounds, figure = import_figure(args.model, h, args.yaw, 0.0)
+    concrete = textured_material('LedgeConcrete', polyhaven_texture('concrete_wall_008', cache), 0.5, box=True)
+    add_box('Ledge', (2.4, 1.3, 0.3), (0, 0.45, -0.15), concrete, bevel=0.004)
+
+    # Railing on the far edge of the ledge.
+    metal = principled('Railing', '#6E6C70', 0.35, Metallic=0.9)
+    rail_y = 0.95
+    for i in range(-3, 4):
+        add_box(f'RailPost{i}', (0.025, 0.025, 0.34), (i * 0.42 + 0.1, rail_y, 0.17), metal, bevel=0.002)
+    for z, r in ((0.34, 0.012), (0.18, 0.008)):
+        bpy.ops.mesh.primitive_cylinder_add(radius=r, depth=2.6, location=(0, rail_y, z), rotation=(0, math.radians(90), 0))
+        assign(bpy.context.active_object, metal)
+        bpy.ops.object.shade_smooth()
+
+    add_window_view('Skyline', os.path.join(TEXTURES, 'rooftop_skyline_view.jpg'), (0.3, 8.0, 0.9), (13.0, 8.7), 1.3)
+
+    add_soda_can('Soda', (0.15, 0.2, 0.0), '#5B2C8F', height=0.05, radius=0.014)
+
+    # Cool night key from the front-left, magenta/blue city glow as rim light on the figure.
+    add_area_light('NightKey', (-0.55, -0.6, 0.45), (0, 0, h * 0.6), 0.9, 10, color=(0.7, 0.76, 1.0))
+    add_area_light('LedgeFill', (0.6, -0.8, 0.25), (0, 0.05, 0), 1.2, 4, color=(0.75, 0.8, 1.0))
+    rims = [add_area_light('CityPink', (-0.45, 0.3, 0.3), (0, 0, h * 0.6), 0.6, 10, color=(1.0, 0.35, 0.85)),
+            add_area_light('CityBlue', (0.5, 0.3, 0.25), (0, 0, h * 0.5), 0.6, 10, color=(0.3, 0.6, 1.0))]
+    link_lights(rims, figure)
+    set_world_color((0.02, 0.025, 0.06), 1.0)
+
+    add_camera(bounds, figure, args, args.angle if args.angle is not None else 10, 7, lens=35,
+               fstop=args.fstop or 8, fill=0.8, aim=0.5)
+
+
+# --------------------------------------------------------------------------
+# Scene: gaming
+# --------------------------------------------------------------------------
+
+def add_mouse(name, at, yaw_deg, glow_color):
+    at = Vector(at)
+    shell = principled(f'{name}Shell', '#101114', 0.3, **{'Coat Weight': 0.5})
+    bpy.ops.mesh.primitive_uv_sphere_add(radius=1, location=at + Vector((0, 0, 0.012)))
+    body = bpy.context.active_object
+    body.name = name
+    body.scale = (0.031, 0.058, 0.02)
+    body.rotation_euler = (0, 0, math.radians(yaw_deg))
+    bpy.ops.object.shade_smooth()
+    assign(body, shell)
+    bm_cut = add_box(f'{name}Cut', (0.1, 0.14, 0.02), at + Vector((0, 0, -0.01)), None)
+    mod = body.modifiers.new('Flat', 'BOOLEAN')
+    mod.object = bm_cut
+    mod.operation = 'DIFFERENCE'
+    bm_cut.hide_render = True
+    bm_cut.hide_viewport = True
+    add_box(f'{name}Wheel', (0.004, 0.012, 0.006), at + Vector((0, 0.025, 0.031)), principled(f'{name}WheelMat', '#2A2B30', 0.5),
+            bevel=0.002, rotation=(0, 0, math.radians(yaw_deg)))
+    add_box(f'{name}Glow', (0.04, 0.004, 0.003), at + Vector((0, -0.05, 0.004)), emission_material(f'{name}Glow', glow_color, 8),
+            rotation=(0, 0, math.radians(yaw_deg)))
+
+
+def build_gaming(args):
+    """Dark gaming desk: RGB keyboard and mouse, monitor with a neon wallpaper, LED strips."""
+    h = args.height
+    bounds, figure = import_figure(args.model, h, args.yaw, 0.0)
+    purple, cyan = (0.62, 0.25, 1.0, 1.0), (0.2, 0.85, 1.0, 1.0)
+    add_box('Desk', (2.4, 1.2, 0.03), (0, 0.3, -0.015), principled('DarkDesk', '#121216', 0.35, **{'Coat Weight': 0.4, 'Coat Roughness': 0.15}),
+            bevel=0.003)
+    add_box('BackWall', (5.0, 0.06, 3.0), (0, 0.95, 1.0), principled('DarkWall', '#17171D', 0.85))
+
+    # Monitor behind-left with the generated neon city wallpaper.
+    mon = Vector((-0.33, 0.62, 0.0))
+    bezel = principled('Bezel', '#0B0B0D', 0.35)
+    add_box('MonitorBase', (0.22, 0.16, 0.012), mon + Vector((0, 0.02, 0.006)), bezel, bevel=0.004)
+    add_box('MonitorNeck', (0.05, 0.03, 0.1), mon + Vector((0, 0.07, 0.06)), bezel, bevel=0.004)
+    add_box('MonitorBody', (0.66, 0.025, 0.39), mon + Vector((0, 0.05, 0.3)), bezel, bevel=0.004)
+    screen = add_window_view('Screen', os.path.join(TEXTURES, 'monitor_wallpaper.jpg'), mon + Vector((0, 0.036, 0.305)),
+                             (0.635, 0.357), 1.6)
+    screen.visible_shadow = False
+    add_area_light('ScreenLight', mon + Vector((0, 0.0, 0.3)), (0, 0, h * 0.6), 0.6, 4, color=(0.55, 0.45, 1.0), size_y=0.35)
+
+    # PC tower behind-right with a glowing glass side.
+    tower = Vector((0.45, 0.62, 0.0))
+    add_box('Tower', (0.21, 0.42, 0.45), tower + Vector((0, 0, 0.225)), bezel, bevel=0.006)
+    add_box('TowerGlass', (0.004, 0.36, 0.38), tower + Vector((-0.107, 0, 0.235)), emission_material('TowerGlow', purple, 1.0))
+
+    # LED strips on the wall: a vertical purple one and a horizontal cyan one.
+    add_box('LedPurple', (0.02, 0.01, 1.2), (0.62, 0.915, 0.6), emission_material('LedPurple', purple, 14))
+    add_box('LedCyan', (1.4, 0.01, 0.015), (-0.2, 0.915, 0.92), emission_material('LedCyan', cyan, 10))
+    add_area_light('WallWash', (0.6, 0.85, 0.5), (0.62, 0.95, 0.4), 0.3, 12, color=(0.6, 0.3, 1.0), size_y=1.0)
+
+    # Keyboard with purple underglow, and a mouse.
+    add_keyboard((-0.29, 0.12, 0.0), 8, principled('KbCaseBlack', '#121215', 0.4),
+                 principled('KbKeyBlack', '#1B1B20', 0.45), principled('KbModBlack', '#26262C', 0.45))
+    add_box('KbUnderglow', (0.36, 0.125, 0.002), (-0.29, 0.12, 0.001), emission_material('KbGlow', purple, 6),
+            rotation=(0, 0, math.radians(8)))
+    add_mouse('Mouse', (0.14, 0.22, 0.0), -10, purple)
+
+    # Cool monitor light from the left, purple rim from the right on the figure.
+    add_area_light('CoolFill', (-0.5, -0.6, 0.4), (0, 0, h * 0.6), 0.8, 6, color=(0.65, 0.72, 1.0))
+    rim = add_area_light('PurpleRim', (0.45, 0.35, 0.3), (0, 0, h * 0.6), 0.5, 10, color=(0.75, 0.35, 1.0))
+    link_lights([rim], figure)
+    set_world_color((0.015, 0.012, 0.025), 1.0)
+
+    add_camera(bounds, figure, args, args.angle if args.angle is not None else 10, 7, lens=35,
+               fstop=args.fstop or 8, fill=0.8, aim=0.5)
+
+
+# --------------------------------------------------------------------------
 # Render setup
 # --------------------------------------------------------------------------
 
@@ -1567,7 +1693,8 @@ def main():
     bpy.ops.wm.read_factory_settings(use_empty=True)
     {'studio': build_studio, 'desk': build_desk, 'cafe': build_cafe,
      'records': build_records, 'fireplace': build_fireplace,
-     'nordic': build_nordic, 'nightcity': build_nightcity}[args.scene](args)
+     'nordic': build_nordic, 'nightcity': build_nightcity,
+     'rooftop': build_rooftop, 'gaming': build_gaming}[args.scene](args)
     configure_render(args)
     bpy.context.scene.view_settings.exposure += args.exposure
     if args.fill > 0:
